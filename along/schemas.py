@@ -40,6 +40,8 @@ class Route(BaseModel):
 
 
 class SearchQuery(BaseModel):
+    start_time: float | None = None
+    end_time: float | None = None
     queries: list[str] = Field(default_factory=list, max_length=4)
     objects: list[str] = Field(default_factory=list, max_length=10)
 
@@ -53,6 +55,10 @@ class Answer(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)
     source_ids: list[str] = Field(default_factory=list, max_length=10)
     suggestion: str | None = Field(default=None, max_length=2000)
+
+
+class FrameSelection(BaseModel):
+    frame_ids: list[str] = Field(default_factory=list, max_length=6)
 
 
 class Rank(BaseModel):
@@ -70,6 +76,6 @@ class ChatInput(BaseModel):
 
 class Mutation(BaseModel):
     version: int = Field(ge=1)
-    action: Literal["confirm_plan", "pause", "resume", "finish", "step", "suggestion", "note"]
+    action: Literal["confirm_plan", "pause", "resume", "finish", "step", "suggestion", "note", "issue"]
     target: str = Field(default="", max_length=100)
     value: str = Field(default="", max_length=2000)

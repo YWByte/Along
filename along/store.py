@@ -73,6 +73,11 @@ class Store:
           result TEXT, created REAL NOT NULL);
         PRAGMA user_version=1;
         """)
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(media)")}
+        if "origin" not in columns:
+            self.conn.execute("ALTER TABLE media ADD COLUMN origin TEXT NOT NULL DEFAULT 'camera'")
+            self.conn.commit()
+        self.conn.execute("PRAGMA user_version=2")
         with self.tx() as db:
             db.execute("UPDATE jobs SET status='pending' WHERE status='running'")
             db.execute("UPDATE requests SET status='failed' WHERE status='running'")
@@ -117,6 +122,9 @@ class Store:
         return self.task(row["id"]) if row else None
 
     def create_task(self, goal: str):
+        goal = goal.strip()
+        if len(goal) < 2:
+            raise ValueError("请提供具体任务目标")
         task_id = uid("task")
         state = {"steps": {}, "notes": [], "open_issues": [], "preparing": False,
                  "error": None, "plan_revision": 0}

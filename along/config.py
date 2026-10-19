@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     search_dir: Path = Path("/Users/wondery/Work/search-web-mcp")
     fetch_dir: Path = Path("/Users/wondery/Work/webfetch")
     token_file: Path = Path("/Users/wondery/Work/tools/proxy/.env")
-    port: int = 8765
+    port: int = 8766
     request_timeout: float = 90
     event_window: int = Field(default=30, ge=10, le=300)
     frame_interval: int = Field(default=2, ge=1, le=30)
