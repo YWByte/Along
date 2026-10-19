@@ -50,8 +50,9 @@ class MCPWebProvider:
             if not token:
                 raise ProviderError("网页 MCP 缺少可用凭据")
             env["CODEBUDDY_TOKEN"] = token
-        params = StdioServerParameters(command=str(executable), args=[str(directory / "server.ts")],
-                                       cwd=str(directory), env=env)
+        params = StdioServerParameters(
+            command=str(executable), args=[str(directory / "server.ts")], cwd=str(directory), env=env
+        )
         try:
             async with asyncio.timeout(50):
                 async with stdio_client(params) as (read, write):
@@ -82,7 +83,14 @@ class MCPWebProvider:
 
     async def fetch(self, url: str) -> str:
         await validate_public_url(url)
-        return await self.call(self.settings.fetch_dir, "fetch_web", {
-            "url": url, "prompt": "提取原始操作步骤、适用型号或条件、材料用量、风险与检查条件。不要补写原文没有的步骤。",
-            "format": "markdown", "max_length": 18000, "timeout": 25,
-        })
+        return await self.call(
+            self.settings.fetch_dir,
+            "fetch_web",
+            {
+                "url": url,
+                "prompt": "提取原始操作步骤、适用型号或条件、材料用量、风险与检查条件。不要补写原文没有的步骤。",
+                "format": "markdown",
+                "max_length": 18000,
+                "timeout": 25,
+            },
+        )

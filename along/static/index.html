@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>ALONG · 一起完成</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <span class="brand">ALONG<span class="dot">●</span></span
+        ><span class="tagline">看见过程，一起完成。</span>
+      </div>
+      <span id="connection" class="badge">连接中</span>
+    </header>
+    <main>
+      <div class="notice">
+        图像只在你开启相机后采集。即时问答按需取图；确认开始任务后持续记录。必要图片和文字会发送至指定模型，原始记录保存在本机。ALONG
+        不认证操作安全。
+      </div>
+      <section class="workspace">
+        <div class="panel camera-panel">
+          <div class="section-head">
+            <h2>现场</h2>
+            <span id="capture-status" class="badge">相机未开启</span>
+          </div>
+          <div class="viewfinder">
+            <video id="camera" autoplay muted playsinline></video
+            ><img id="uploaded-preview" alt="所选图片" hidden />
+            <div id="camera-placeholder">
+              先让 ALONG 看看你的工作台<br /><small
+                >也可以选择一张图片，直接提问</small
+              >
+            </div>
+          </div>
+          <div class="toolbar">
+            <button id="camera-toggle">开启相机</button
+            ><label class="file-button"
+              >选择图片<input
+                type="file"
+                id="image-input"
+                accept="image/*"
+                hidden /></label
+            ><button id="clear-image" hidden>清除图片</button>
+          </div>
+          <label class="check"
+            ><input
+              id="record-clips"
+              type="checkbox"
+            />任务中保留本地视频片段（额外占用空间，不自动上传模型）</label
+          >
+          <p id="queue-status" class="muted">持续采集只在任务进行中启用</p>
+          <details>
+            <summary>运行状态与隐私</summary>
+            <p id="diagnostics" class="muted"></p>
+            <p class="muted">
+              即时图片保留一天；已结束任务的媒体默认保留七天。未结束任务不自动清理，容量满时停止接受新媒体。关闭页面会停止相机采集，已保存任务可恢复。
+            </p>
+            <button id="retry-jobs">重试失败的事件整理</button>
+          </details>
+        </div>
+        <div class="panel chat-panel">
+          <div class="section-head">
+            <h2>对话</h2>
+            <select id="mode" aria-label="对话模式">
+              <option value="auto">自动识别场景</option>
+              <option value="instant">只问当前画面</option>
+              <option value="task">任务内求助</option>
+            </select>
+          </div>
+          <div id="messages" aria-live="polite">
+            <article class="assistant">
+              <p>
+                可以问“这个是什么”，也可以说“我们一起做……”。开始任务前，我会先找资料，与你确认操作表。
+              </p>
+            </article>
+          </div>
+          <div id="activity" class="muted" aria-live="polite"></div>
+          <form id="chat-form">
+            <textarea
+              id="question"
+              rows="2"
+              maxlength="4000"
+              placeholder="问问当前画面，或告诉我想一起完成什么…"
+              required
+            ></textarea>
+            <div class="toolbar">
+              <button type="button" id="mic">按下说话</button
+              ><label class="check"
+                ><input id="speak" type="checkbox" checked />语音播放</label
+              ><button type="button" id="stop-speech">停止播放</button
+              ><button type="submit" id="send" class="primary">发送</button>
+            </div>
+          </form>
+          <p class="muted small">
+            麦克风再次按下停止，识别后显示在输入框，由你确认发送。Enter
+            发送，Shift+Enter 换行。
+          </p>
+        </div>
+      </section>
+      <section class="panel task-panel">
+        <div class="section-head">
+          <h2>一起完成</h2>
+          <span id="task-status" class="badge">没有进行中的任务</span>
+        </div>
+        <form id="start-form" class="inline">
+          <input
+            id="goal"
+            maxlength="2000"
+            placeholder="例如：按指定配方制作一批饼干"
+            required
+          /><button class="primary">准备新任务</button>
+        </form>
+        <div id="task-content"></div>
+        <div id="task-controls" hidden>
+          <div class="toolbar">
+            <button id="confirm-plan" class="primary">核对并开始</button
+            ><button id="pause-task">暂停任务</button
+            ><button id="resume-task">继续任务</button
+            ><button id="finish-task">结束任务</button>
+          </div>
+          <details>
+            <summary>补充信息 / 更换资料 / 调整计划</summary>
+            <form id="note-form" class="inline">
+              <input
+                id="note"
+                maxlength="2000"
+                placeholder="材料、型号、现场限制或对旧判断的纠正"
+                required
+              /><button>记录用户说明</button>
+            </form>
+            <form id="prepare-form" class="stack">
+              <input
+                id="source-url"
+                type="url"
+                placeholder="可选：指定公开说明书或菜谱网址"
+              /><input
+                id="revision-reason"
+                maxlength="2000"
+                placeholder="可选：这次为何需要调整计划"
+              /><button>重新获取资料并生成计划</button>
+            </form>
+            <label class="file-button"
+              >导入说明书（PDF / TXT / Markdown）<input
+                id="source-file"
+                type="file"
+                accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
+                hidden
+            /></label>
+            <p class="muted">
+              更换操作表前请暂停。旧版本与旧执行记录会保留，新版本需重新确认。网页和上传内容不是设备指令。
+            </p>
+          </details>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="section-head">
+          <h2>过程与依据</h2>
+          <div class="toolbar">
+            <select id="history-task" aria-label="历史任务">
+              <option value="">选择任务</option></select
+            ><button id="timeline-refresh">查看记录</button
+            ><button id="delete-task" class="danger">删除所选任务</button>
+          </div>
+        </div>
+        <div id="timeline">
+          <p class="muted">
+            开始任务后，这里会显示事件、原始图片与用户决策。事件描述是可错的索引，不是事实认证。
+          </p>
+        </div>
+      </section>
+    </main>
+    <div id="toast" role="alert" hidden></div>
+    <dialog id="evidence-dialog">
+      <button id="close-dialog">关闭</button>
+      <div id="evidence-content"></div>
+    </dialog>
+    <footer>
+      ALONG · Mac Prototype · Deepseek-V4.1-Flash · 不确定时，先补充依据。
+    </footer>
+  </body>
+</html>

@@ -49,12 +49,14 @@ class CodexProxyProvider:
 
     async def text(self, prompt: str, images: list[ImageInput] | None = None) -> str:
         content = [{"type": "input_text", "text": prompt}]
-        for image in (images or [])[:self.settings.max_images]:
+        for image in (images or [])[: self.settings.max_images]:
             encoded = base64.b64encode(await asyncio.to_thread(image.path.read_bytes)).decode()
-            content.extend([
-                {"type": "input_text", "text": f"证据图片 ID={image.id}; {image.label}"},
-                {"type": "input_image", "image_url": f"data:image/jpeg;base64,{encoded}"},
-            ])
+            content.extend(
+                [
+                    {"type": "input_text", "text": f"证据图片 ID={image.id}; {image.label}"},
+                    {"type": "input_image", "image_url": f"data:image/jpeg;base64,{encoded}"},
+                ]
+            )
         payload = {
             "model": self.settings.model,
             "instructions": SYSTEM,
@@ -92,13 +94,18 @@ class CodexProxyProvider:
                     raise ProviderError("模型返回未完成或失败结果；没有将部分结果保存为事实")
                 text = body.get("output_text") or "".join(
                     part.get("text", "")
-                    for item in body.get("output", []) if item.get("type") == "message"
-                    for part in item.get("content", []) if part.get("type") == "output_text"
+                    for item in body.get("output", [])
+                    if item.get("type") == "message"
+                    for part in item.get("content", [])
+                    if part.get("type") == "output_text"
                 )
                 if not text.strip():
                     raise ProviderError("模型没有返回可用文本")
-                self.last_metrics = {"seconds": round(time.monotonic() - started, 2),
-                                     "usage": body.get("usage", {}), "images": len(images or [])}
+                self.last_metrics = {
+                    "seconds": round(time.monotonic() - started, 2),
+                    "usage": body.get("usage", {}),
+                    "images": len(images or []),
+                }
                 log.info("vlm complete seconds=%s images=%s", self.last_metrics["seconds"], len(images or []))
                 return text
             except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
@@ -111,8 +118,11 @@ class CodexProxyProvider:
         raise ProviderError("模型调用失败")
 
     async def structured(self, prompt: str, schema: type[T], images: list[ImageInput] | None = None) -> T:
-        instruction = prompt + "\n只输出 JSON，不要 Markdown。JSON Schema：" + json.dumps(
-            schema.model_json_schema(), ensure_ascii=False)
+        instruction = (
+            prompt
+            + "\n只输出 JSON，不要 Markdown。JSON Schema："
+            + json.dumps(schema.model_json_schema(), ensure_ascii=False)
+        )
         for attempt in range(2):
             raw = await self.text(instruction, images)
             try:

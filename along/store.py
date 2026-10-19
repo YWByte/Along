@@ -126,19 +126,29 @@ class Store:
         if len(goal) < 2:
             raise ValueError("请提供具体任务目标")
         task_id = uid("task")
-        state = {"steps": {}, "notes": [], "open_issues": [], "preparing": False,
-                 "error": None, "plan_revision": 0}
+        state = {
+            "steps": {},
+            "notes": [],
+            "open_issues": [],
+            "preparing": False,
+            "error": None,
+            "plan_revision": 0,
+        }
         try:
             with self.tx() as db:
-                db.execute("INSERT INTO tasks(id,goal,status,state,created,updated) VALUES(?,?,'draft',?,?,?)",
-                           (task_id, goal, dump(state), time.time(), time.time()))
+                db.execute(
+                    "INSERT INTO tasks(id,goal,status,state,created,updated) VALUES(?,?,'draft',?,?,?)",
+                    (task_id, goal, dump(state), time.time(), time.time()),
+                )
                 self._ledger(db, task_id, "task_started", {"goal": goal})
         except sqlite3.IntegrityError as exc:
             raise Conflict("已有未结束任务，请先结束或删除，再开始新任务") from exc
         return self.task(task_id)
 
     def _ledger(self, db, task_id, kind, data):
-        db.execute("INSERT INTO ledger VALUES(?,?,?,?,?)", (uid("log"), task_id, kind, dump(data), time.time()))
+        db.execute(
+            "INSERT INTO ledger VALUES(?,?,?,?,?)", (uid("log"), task_id, kind, dump(data), time.time())
+        )
 
     def log(self, task_id, kind, data):
         with self.tx() as db:
@@ -154,27 +164,43 @@ class Store:
             state = json.loads(row["state"])
             plan = json.loads(row["plan"]) if row["plan"] else None
             status, state, plan, kind, detail = callback(dict(row), state, plan, db)
-            db.execute("UPDATE tasks SET version=version+1,status=?,state=?,plan=?,updated=? WHERE id=?",
-                       (status, dump(state), dump(plan) if plan else None, time.time(), task_id))
+            db.execute(
+                "UPDATE tasks SET version=version+1,status=?,state=?,plan=?,updated=? WHERE id=?",
+                (status, dump(state), dump(plan) if plan else None, time.time(), task_id),
+            )
             self._ledger(db, task_id, kind, detail)
-            db.execute("INSERT INTO checkpoints VALUES(?,?,?,?,?)", (
-                uid("cp"), task_id, version + 1,
-                dump({"status": status, "state": state, "plan": plan}), time.time()))
+            db.execute(
+                "INSERT INTO checkpoints VALUES(?,?,?,?,?)",
+                (
+                    uid("cp"),
+                    task_id,
+                    version + 1,
+                    dump({"status": status, "state": state, "plan": plan}),
+                    time.time(),
+                ),
+            )
         return self.task(task_id)
 
     def messages(self, conversation_id, limit=8, task_id=None):
         if task_id:
-            rows = self.rows("SELECT role,text FROM messages WHERE task_id=? ORDER BY created DESC LIMIT ?",
-                             (task_id, limit))
+            rows = self.rows(
+                "SELECT role,text FROM messages WHERE task_id=? ORDER BY created DESC LIMIT ?",
+                (task_id, limit),
+            )
         else:
-            rows = self.rows("SELECT role,text FROM messages WHERE conversation_id=? AND task_id IS NULL "
-                             "ORDER BY created DESC LIMIT ?", (conversation_id, limit))
+            rows = self.rows(
+                "SELECT role,text FROM messages WHERE conversation_id=? AND task_id IS NULL "
+                "ORDER BY created DESC LIMIT ?",
+                (conversation_id, limit),
+            )
         return rows[::-1]
 
     def message(self, conversation_id, task_id, role, text, data=None):
         with self.tx() as db:
-            db.execute("INSERT INTO messages VALUES(?,?,?,?,?,?,?)", (
-                uid("msg"), conversation_id, task_id, role, text, dump(data) if data else None, time.time()))
+            db.execute(
+                "INSERT INTO messages VALUES(?,?,?,?,?,?,?)",
+                (uid("msg"), conversation_id, task_id, role, text, dump(data) if data else None, time.time()),
+            )
 
     def begin_request(self, request_id, fingerprint):
         with self.tx() as db:
@@ -188,15 +214,22 @@ class Store:
                     raise Conflict("该请求正在处理中")
                 db.execute("UPDATE requests SET status='running' WHERE id=?", (request_id,))
             else:
-                db.execute("INSERT INTO requests VALUES(?,?,'running',NULL,?)",
-                           (request_id, fingerprint, time.time()))
+                db.execute(
+                    "INSERT INTO requests VALUES(?,?,'running',NULL,?)",
+                    (request_id, fingerprint, time.time()),
+                )
         return None
 
     def complete_request(self, request_id, result=None):
         with self.tx() as db:
-            db.execute("UPDATE requests SET status=?,result=? WHERE id=?",
-                       ("done" if result is not None else "failed", dump(result) if result is not None else None,
-                        request_id))
+            db.execute(
+                "UPDATE requests SET status=?,result=? WHERE id=?",
+                (
+                    "done" if result is not None else "failed",
+                    dump(result) if result is not None else None,
+                    request_id,
+                ),
+            )
 
     def delete_task(self, task_id):
         self.task(task_id)
