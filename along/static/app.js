@@ -129,7 +129,9 @@ function renderScreen() {
     ? executing
       ? "一起操作"
       : current
-        ? "确认方案"
+        ? current.state.pending_questions?.length
+          ? "补充条件"
+          : "确认方案"
         : "说目标"
     : "";
   $("camera-panel").hidden = !(mode === "instant" || executing);
@@ -163,7 +165,7 @@ function renderScreen() {
   $("chat-hint").textContent = !taskMode
     ? ""
     : !current
-      ? "告诉我目标，我会查找资料，与你确认方案。"
+      ? "告诉我目标，我会与你确认方案，必要时再查资料。"
       : executing
         ? "结合当前画面与之前的过程，帮你判断下一步。"
         : "核对准备条件；有不适用的地方，直接告诉我。";
@@ -174,6 +176,11 @@ function renderScreen() {
       : executing
         ? "这一步遇到了什么问题？"
         : "例如：我没有烤箱，需要调整方案…";
+  if (taskMode && current?.state.pending_questions?.length) {
+    $("chat-heading").textContent = "补充一下情况";
+    $("chat-hint").textContent = "先确认关键条件，再决定是否需要查资料。";
+    $("question").placeholder = "回答上面的待确认问题…";
+  }
   $("messages").hidden = !$("messages").children.length;
   updateControls();
 }
@@ -518,11 +525,16 @@ async function submitQuestion(e) {
         method: "POST",
         body: { version: current.version, action: "note", value: text },
       });
-      await json(`/api/tasks/${current.id}/prepare`, {
+      const prepared = await json(`/api/tasks/${current.id}/prepare`, {
         method: "POST",
         body: { reason: text },
       });
-      message("assistant", "方案已更新，请重新核对后开始。");
+      message(
+        "assistant",
+        prepared.state.pending_questions?.length
+          ? prepared.state.pending_questions.join("；")
+          : "方案已更新，请重新核对后开始。",
+      );
     } else {
       const blob =
         mode === "instant"
@@ -596,11 +608,32 @@ function renderTask(task) {
   $("task-heading").textContent = confirmed ? "当前步骤" : "确认方案";
   content.append(element("h3", task.goal));
   if (task.state.preparing)
-    content.append(element("p", "正在查找资料并准备方案…", "muted"));
+    content.append(element("p", "正在判断资料需求并准备方案…", "muted"));
   if (task.state.error)
     content.append(element("p", task.state.error, "warning"));
-  const plan = task.plan;
+  const questions = task.state.pending_questions || [];
+  if (questions.length) {
+    $("task-heading").textContent = "先补充几个条件";
+    const list = element("ul");
+    questions.forEach((q) => list.append(element("li", q)));
+    content.append(
+      list,
+      element("p", "在下方回答即可，暂不生成操作步骤。", "muted"),
+    );
+  }
+  const plan = questions.length ? null : task.plan;
   if (plan) {
+    const basis =
+      plan.basis ||
+      (plan.steps.some((s) => s.source_ids.length)
+        ? "references"
+        : "general_knowledge");
+    const labels = {
+      general_knowledge: "通用知识建议 · 未经外部资料核验",
+      references: "参考资料生成 · 不代表已独立核验",
+      mixed: "部分步骤有资料依据，其余为通用建议",
+    };
+    content.append(element("p", labels[basis], "muted"));
     const overview = element(
       confirmed ? "details" : "div",
       undefined,
@@ -644,7 +677,7 @@ function renderTask(task) {
     task.sources.forEach((s) =>
       sources.append(linkButton(s.title, () => viewSource(s.id))),
     );
-    overview.append(sources);
+    if (task.sources.length) overview.append(sources);
     if (confirmed) {
       const index = plan.steps.findIndex(
         (s) => task.state.steps[s.id] !== "user_reported_done",
@@ -740,7 +773,7 @@ function renderTask(task) {
   $("confirm-plan").hidden = !plan || confirmed || task.state.preparing;
   $("record-consent").hidden = !plan || confirmed;
   $("resume-task").hidden = task.status !== "paused" || !confirmed;
-  $("retry-plan").hidden = !!plan || task.state.preparing;
+  $("retry-plan").hidden = !!plan || task.state.preparing || !!questions.length;
   $("pause-task").hidden = task.status !== "active";
   $("finish-task").hidden = task.status === "ended";
 }
@@ -796,7 +829,7 @@ async function refresh() {
 async function prepareTask() {
   if (!current) throw new Error("没有当前任务");
   if (busy) return;
-  setBusy(true, "正在搜索、读取来源并准备操作表…");
+  setBusy(true, "正在判断资料需求并准备方案…");
   try {
     await json(`/api/tasks/${current.id}/prepare`, {
       method: "POST",

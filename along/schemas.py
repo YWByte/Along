@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Observation(BaseModel):
@@ -31,6 +31,26 @@ class PlanDraft(BaseModel):
     questions: list[str] = Field(default_factory=list, max_length=10)
 
 
+class ResearchDecision(BaseModel):
+    action: Literal["direct", "search", "clarify"]
+    reason: str = Field(min_length=1, max_length=1000)
+    information_gap: str = Field(default="", max_length=1000)
+    query: str = Field(default="", max_length=500)
+    questions: list[str] = Field(default_factory=list, max_length=5)
+    source_ids: list[str] = Field(default_factory=list, max_length=6)
+    verification_required: bool = False
+
+    @model_validator(mode="after")
+    def usable_decision(self):
+        if self.action == "search" and (not self.query.strip() or not self.information_gap.strip()):
+            raise ValueError("搜索必须有具体查询和明确资料缺口")
+        if self.action == "clarify" and not any(q.strip() for q in self.questions):
+            raise ValueError("澄清必须给出用户能回答的问题")
+        if self.action == "direct" and self.verification_required and not self.source_ids:
+            raise ValueError("关键操作需要核验时，必须选择适用资料、搜索或先澄清")
+        return self
+
+
 class Route(BaseModel):
     intent: Literal["ask", "start", "pause", "resume", "finish", "clarify"]
     goal: str = ""
@@ -47,6 +67,7 @@ class SearchQuery(BaseModel):
 
 
 class Answer(BaseModel):
+    research: ResearchDecision | None = None
     reply: str = Field(max_length=5000)
     observed: list[str] = Field(default_factory=list, max_length=10)
     hypotheses: list[str] = Field(default_factory=list, max_length=10)

@@ -387,3 +387,22 @@ test("版本冲突不前进、不丢失当前步骤", async (t) => {
   assert.match(await page.locator(".current-step").textContent(), /分类物品/);
   assert.equal(model.task.state.steps.s1, "unknown");
 });
+
+test("待澄清时不展示旧方案或允许开始，回答条件后恢复确认方案", async (t) => {
+  const task = draft();
+  task.state.pending_questions = ["设备的型号是什么？"];
+  const { page, model } = await setup(t, task);
+  await page.click("#enter-task");
+  await page.waitForFunction(() => !document.getElementById("send").disabled);
+  assert.equal(await page.locator("#stage").textContent(), "补充条件");
+  assert.equal(await page.locator("#confirm-plan").isVisible(), false);
+  assert.equal(await page.locator(".plan-overview").count(), 0);
+  assert.match(await page.locator("#task-content").textContent(), /型号是什么/);
+  await ask(page, "只整理桌面，不拆设备");
+  assert.equal(await page.locator("#confirm-plan").isVisible(), true);
+  assert.equal(model.media.length, 0);
+  assert.match(
+    await page.locator("#task-content").textContent(),
+    /通用知识建议/,
+  );
+});

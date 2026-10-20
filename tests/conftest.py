@@ -13,6 +13,7 @@ from along.schemas import (
     Observation,
     PlanDraft,
     Rank,
+    ResearchDecision,
     Route,
     SearchQuery,
     Step,
@@ -25,6 +26,7 @@ class FakeVLM:
     def __init__(self):
         self.calls = []
         self.bad_evidence = False
+        self.research_decision = None
 
     async def structured(self, prompt, schema, images=None):
         self.calls.append((schema.__name__, images or []))
@@ -39,6 +41,20 @@ class FakeVLM:
                 intent="ask",
                 related_to_task=bool(context["task"]) and "无关" not in text,
                 needs_history="刚才" in text,
+            )
+        if schema is ResearchDecision:
+            if self.research_decision:
+                return self.research_decision
+            ids = re.findall(r'"id":"(src_[a-z0-9]+)"', prompt)
+            return (
+                ResearchDecision(action="direct", reason="已有适用资料", source_ids=ids[:1])
+                if ids
+                else ResearchDecision(
+                    action="search",
+                    reason="型号资料缺失",
+                    information_gap="对应型号安装方向",
+                    query="测试型号官方安装方向",
+                )
             )
         if schema is PlanDraft:
             ids = re.findall(r'"id":"(src_[a-z0-9]+)"', prompt)
@@ -79,10 +95,16 @@ class FakeVLM:
 
 
 class FakeWeb:
+    def __init__(self):
+        self.searches = []
+        self.fetches = []
+
     async def search(self, query):
+        self.searches.append(query)
         return [{"title": "测试说明", "url": "https://example.com/manual"}]
 
     async def fetch(self, url):
+        self.fetches.append(url)
         return "说明书：确认材料，按对应型号组装。安装方向需要检查。"
 
 
