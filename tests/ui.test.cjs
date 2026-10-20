@@ -507,6 +507,49 @@ test("场景与跨帧依据折叠展示，不增加首页入口", async (t) => {
   );
 });
 
+test("侧边栏对话展示每次回答 AI 看过的图片与检索过程", async (t) => {
+  const task = draft();
+  task.status = "active";
+  task.state.plan_confirmed = true;
+  const frames = [1, 2, 3].map((i) => ({ id: `f${i}`, captured: 1000 + i }));
+  const { page } = await setup(t, task, {
+    chatResult: {
+      headline: "做对了",
+      reply: "手腕抬起再落下。",
+      retrieval: {
+        question_frames: [{ id: "q1", captured: 1000 }],
+        tools: [
+          { call: { tool: "browse", step_id: "s1" }, result: { events: [{}] } },
+          {
+            call: { tool: "open", step_id: "s1", sheet: true },
+            result: { frames, layout: "sheet", sheet_id: "sheet_abc" },
+          },
+        ],
+      },
+    },
+  });
+  await page.route("**/api/sheets/**", (route) =>
+    route.fulfill({ contentType: "image/jpeg", body: Buffer.alloc(0) }),
+  );
+  await page.click("#enter-task");
+  await page.waitForFunction(
+    () => document.getElementById("camera").videoWidth > 0,
+  );
+  await ask(page, "刚刚对了吗");
+  await page.click("#open-menu");
+  const panel = page.locator("#drawer-thread .ctx");
+  assert.match(await panel.locator("summary").textContent(), /2 张 · 2 次检索/);
+  await panel.locator("summary").click();
+  await panel.locator(".ctx-step").nth(2).waitFor();
+  assert.equal(await panel.locator(".ctx-step").count(), 3);
+  assert.match(
+    await panel.locator(".ctx-label").nth(2).textContent(),
+    /回看 · s1 · .* · 拼图 3 帧/,
+  );
+  assert.equal(await panel.locator(".ctx-img.sheet").count(), 1);
+  await page.screenshot({ path: "/tmp/along-build/ui/context.png" });
+});
+
 test("执行页先显示一句结论，可收起；方向键推进步骤，暂停时不推进", async (t) => {
   const task = draft();
   task.status = "active";

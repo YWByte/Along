@@ -388,6 +388,120 @@ async function openEvidence(data) {
   );
   if (!$("evidence-dialog").open) $("evidence-dialog").showModal();
 }
+const TOOL_NAMES = {
+  open: "回看",
+  current: "当前画面",
+  browse: "浏览目录",
+  search: "搜索记录",
+};
+function contextSteps(data) {
+  const steps = [];
+  const asked = data.retrieval?.question_frames || [];
+  if (asked.length)
+    steps.push({ label: "提问时画面", frames: asked, sheet: null });
+  for (const t of data.retrieval?.tools || []) {
+    const r = t.result || {},
+      c = t.call || {};
+    const frames = r.frames || [];
+    const parts = [TOOL_NAMES[c.tool] || c.tool];
+    if (c.step_id) parts.push(c.step_id);
+    if (c.query) parts.push(`“${c.query}”`);
+    if (frames.length)
+      parts.push(
+        `${clock(frames[0].captured)}–${clock(frames.at(-1).captured)}`,
+        r.layout === "sheet"
+          ? `拼图 ${frames.length} 帧`
+          : `${frames.length} 帧`,
+      );
+    else if (r.events) parts.push(`${r.events.length} 条事件`);
+    steps.push({
+      label: parts.join(" · "),
+      frames,
+      sheet: r.layout === "sheet" ? r.sheet_id : null,
+      error: frames.length ? null : r.error,
+    });
+  }
+  return steps;
+}
+async function sheetURL(id) {
+  const response = await api(`/api/sheets/${id}`);
+  const url = URL.createObjectURL(await response.blob());
+  blobURLs.add(url);
+  return url;
+}
+function contextImage(load, label, onOpen) {
+  const b = element("button", undefined, "ctx-img");
+  b.type = "button";
+  b.setAttribute("aria-label", label);
+  const img = element("img");
+  img.alt = label;
+  b.append(img);
+  load()
+    .then((url) => {
+      img.src = url;
+      b.onclick = () => onOpen(url);
+    })
+    .catch(() => b.classList.add("missing"));
+  return b;
+}
+function showImage(url, title) {
+  const el = element("img");
+  el.src = url;
+  $("evidence-content").replaceChildren(element("p", title, "eyebrow"), el);
+  if (!$("evidence-dialog").open) $("evidence-dialog").showModal();
+}
+function renderContext(steps, root) {
+  for (const step of steps) {
+    const group = element("div", undefined, "ctx-step");
+    group.append(element("p", step.label, "ctx-label"));
+    if (step.error) group.append(element("p", step.error, "ctx-error"));
+    const row = element("div", undefined, "ctx-row");
+    // A sheet is the exact image the model saw; fall back to its frames once the cache is gone.
+    const sheetFailed = () => {
+      row.replaceChildren();
+      tiles();
+    };
+    const tiles = () =>
+      step.frames.forEach((f, i) =>
+        row.append(
+          contextImage(
+            () => mediaURL(f.id),
+            `${step.label} 第 ${i + 1} 帧 ${clock(f.captured)}`,
+            (url) => showImage(url, `${clock(f.captured)} · ${f.id}`),
+          ),
+        ),
+      );
+    if (step.sheet) {
+      const b = contextImage(
+        () =>
+          sheetURL(step.sheet).catch((e) => (sheetFailed(), Promise.reject(e))),
+        `${step.label} 拼图`,
+        (url) => showImage(url, step.label),
+      );
+      b.classList.add("sheet");
+      row.append(b);
+    } else tiles();
+    if (step.frames.length) group.append(row);
+    root.append(group);
+  }
+}
+function contextPanel(data) {
+  const steps = contextSteps(data);
+  const images = steps.reduce((n, s) => n + (s.sheet ? 1 : s.frames.length), 0);
+  if (!steps.length) return null;
+  const panel = element("details", undefined, "ctx");
+  const lookups = steps.filter((s) => s.label !== "提问时画面").length;
+  panel.append(
+    element(
+      "summary",
+      `AI 看过的图片 · ${images} 张${lookups ? ` · ${lookups} 次检索` : ""}`,
+    ),
+  );
+  panel.addEventListener("toggle", () => {
+    if (panel.open && panel.children.length === 1) renderContext(steps, panel);
+  });
+  return panel;
+}
 function message(role, text, data = {}) {
   const box = element("article", undefined, role);
   if (role === "assistant") {
@@ -408,6 +522,8 @@ function message(role, text, data = {}) {
           "evidence-link",
         ),
       );
+    const panel = mode === "task" && contextPanel(data);
+    if (panel) box.append(panel);
   } else box.append(element("p", text));
   if (data.warnings?.length)
     box.append(element("p", data.warnings.join("；"), "warning"));

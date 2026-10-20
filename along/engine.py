@@ -559,6 +559,9 @@ class Engine:
                 compact_state["status"] = task["status"]
             if related and route.needs_history:
                 images.clear()
+            question_frames = [
+                {"id": im.id, "captured": self.captured(im.id)} for im in images if not im.frame_ids
+            ]
             context = {
                 "question": request.text,
                 "scenario": task["state"].get("scenario", route.scenario) if related else "general",
@@ -655,6 +658,7 @@ class Engine:
                 "scenario": context["scenario"],
                 "review_focus": context.get("review_focus"),
                 "retrieval": {
+                    "question_frames": question_frames,
                     "visual_reviews": context.get("visual_reviews", []),
                     "answer_audit": context.get("answer_audit"),
                     "events": event_ids,

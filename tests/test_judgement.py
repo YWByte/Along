@@ -88,6 +88,13 @@ def test_current_step_question_opens_current_step_sheet_and_maps_evidence(app, c
     assert len(frames) >= 10 and not any(f.startswith("sheet_") for f in frames)
     assert result["evidence_ids"] and set(result["evidence_ids"]) <= set(frames)
     assert result["criteria"][0]["frame_ids"] == []
+    # The sidebar can show the exact composite the model saw, and only valid sheet ids are served.
+    tool = result["retrieval"]["tools"][0]["result"]
+    assert tool["layout"] == "sheet"
+    sheet = client.get(f"/api/sheets/{tool['sheet_id']}")
+    assert sheet.status_code == 200 and sheet.headers["content-type"] == "image/jpeg"
+    assert client.get("/api/sheets/..%2Faccess-token").status_code in (404, 422)
+    assert result["retrieval"]["question_frames"] == []
 
 
 async def test_audit_correction_keeps_visual_verdict_and_adjustment(app):

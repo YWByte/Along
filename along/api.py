@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Path as FastAPIPath
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -337,6 +338,13 @@ def create_app(settings: Settings | None = None, vlm=None, web=None):
             if row["kind"] == "frame"
             else ("video/mp4" if path.suffix == ".mp4" else "video/webm"),
         )
+
+    @app.get("/api/sheets/{sheet_id}")
+    async def get_sheet(sheet_id: Annotated[str, FastAPIPath(pattern="^sheet_[0-9a-f]{20}$")]):
+        path = store.directory / "media" / "sheets" / f"{sheet_id}.jpg"
+        if not path.is_file():
+            raise KeyError("拼图缓存已清理，可查看对应原始帧")
+        return FileResponse(path, media_type="image/jpeg")
 
     @app.post("/api/speech")
     async def transcribe(file: Annotated[UploadFile, File()]):
