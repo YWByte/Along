@@ -79,10 +79,11 @@ class FakeVLM:
                 suggestion="先查看对应型号说明书",
             )
         if schema is EventDraft:
+            evidence_id = images[0].frame_ids[0] if images[0].frame_ids else images[0].id
             return EventDraft(
                 summary="手放置滑轨",
                 objects=["滑轨"],
-                observations=[Observation(claim="可见滑轨", frame_ids=[images[0].id])],
+                observations=[Observation(claim="可见滑轨", frame_ids=[evidence_id])],
                 unknowns=["安装方向未确认"],
             )
         if schema is SearchQuery:

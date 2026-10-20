@@ -55,7 +55,13 @@ class Memory:
 
     def schedule(self):
         tasks = self.store.rows("SELECT id,status FROM tasks")
+        max_gap = max(5, 3 * self.settings.frame_interval)
         for task in tasks:
+            if self.store.one(
+                "SELECT 1 FROM jobs WHERE task_id=? AND status IN ('pending','running')",
+                (task["id"],),
+            ):
+                continue
             frames = self.store.rows(
                 "SELECT * FROM media WHERE task_id=? AND kind='frame' AND indexed=0 "
                 "AND expired=0 ORDER BY captured,seq",
@@ -63,37 +69,47 @@ class Memory:
             )
             if not frames:
                 continue
-            first = frames[0]["captured"]
-            window = []
+            core = []
+            closed = False
             for frame in frames:
-                if frame["captured"] > first + self.settings.event_window or any(
-                    frame[key] != frames[0][key] for key in ("plan_revision", "step_id", "origin")
+                if core and (
+                    any(frame[key] != core[0][key] for key in ("plan_revision", "step_id", "origin"))
+                    or frame["captured"] - core[-1]["captured"] > max_gap
                 ):
+                    closed = True
                     break
-                window.append(frame)
-            if task["status"] == "active" and time.time() - first < self.settings.event_window:
+                core.append(frame)
+                if len(core) == self.settings.event_frames:
+                    closed = True
+                    break
+            if (
+                task["status"] == "active"
+                and not closed
+                and time.time() - core[-1]["captured"] < self.settings.event_window
+            ):
                 continue
             previous = self.store.rows(
-                "SELECT id FROM media WHERE task_id=? AND kind='frame' AND indexed=1 "
-                "AND expired=0 AND captured<? AND captured>=? AND plan_revision IS ? AND step_id IS ? "
-                "AND origin=? ORDER BY captured DESC LIMIT 2",
+                "SELECT * FROM media WHERE task_id=? AND kind='frame' AND indexed=1 "
+                "AND expired=0 AND captured<? AND origin=? ORDER BY captured DESC LIMIT ?",
                 (
                     task["id"],
-                    first,
-                    first - self.settings.event_window,
-                    frames[0]["plan_revision"],
-                    frames[0]["step_id"],
-                    frames[0]["origin"],
+                    core[0]["captured"],
+                    core[0]["origin"],
+                    self.settings.event_overlap_frames,
                 ),
             )
-            ids = [f["id"] for f in previous[::-1]] + [f["id"] for f in window]
+            previous = previous[::-1]
+            if previous and core[0]["captured"] - previous[-1]["captured"] > max_gap:
+                previous = []
+            ids = [f["id"] for f in previous] + [f["id"] for f in core]
             job_id = "evt_" + hashlib.sha256(dump(ids).encode()).hexdigest()[:24]
             with self.store.tx() as db:
                 db.execute(
-                    "INSERT OR IGNORE INTO jobs(id,task_id,frame_ids,status,available) VALUES(?,?,?,'pending',?)",
-                    (job_id, task["id"], dump(ids), time.time()),
+                    "INSERT OR IGNORE INTO jobs(id,task_id,frame_ids,status,available,context_count) "
+                    "VALUES(?,?,?,'pending',?,?)",
+                    (job_id, task["id"], dump(ids), time.time(), len(previous)),
                 )
-                db.executemany("UPDATE media SET indexed=1 WHERE id=?", [(f["id"],) for f in window])
+                db.executemany("UPDATE media SET indexed=1 WHERE id=?", [(f["id"],) for f in core])
 
     def image(self, frame_id):
         try:
@@ -130,37 +146,106 @@ class Memory:
 
     async def process(self, job):
         ids = json.loads(job["frame_ids"])
-        # Evenly cover the whole window instead of only keeping its beginning.
-        selected = [
-            ids[i]
-            for i in sorted(
-                set(np.linspace(0, len(ids) - 1, min(len(ids), 8, self.settings.max_images), dtype=int))
-            )
-        ]
-        images = [image for fid in selected if (image := self.image(fid))]
-        if not images:
-            raise ProviderError("事件原始图片均不可用，未生成事件摘要")
+        context_count = min(job.get("context_count", 0), len(ids))
+        context_ids, core_ids = ids[:context_count], ids[context_count:]
+        if not core_ids:
+            raise ProviderError("事件没有核心帧，未生成摘要")
         rows = self.store.rows(
-            "SELECT id,captured FROM media WHERE id IN (" + ",".join("?" * len(ids)) + ")", ids
+            "SELECT id,captured,seq,origin,plan_revision,step_id FROM media WHERE id IN ("
+            + ",".join("?" * len(ids))
+            + ") ORDER BY captured,seq",
+            ids,
         )
-        start, end = min(r["captured"] for r in rows), max(r["captured"] for r in rows)
+        by_id = {row["id"]: row for row in rows}
+        ordered_rows = [by_id[fid] for fid in ids if fid in by_id]
+        core_rows = [by_id[fid] for fid in core_ids if fid in by_id]
+        if not core_rows:
+            raise ProviderError("事件核心图片均不可用，未生成摘要")
+        images = [image for fid in ids if (image := self.image(fid))]
+        if not images:
+            raise ProviderError("事件原始图片均不可用，未生成摘要")
+        evidence = [self.sheet(images, [by_id[image.id] for image in images])] if len(images) > 1 else images
+        core_start, core_end = core_rows[0]["captured"], core_rows[-1]["captured"]
+        visual_start, visual_end = ordered_rows[0]["captured"], ordered_rows[-1]["captured"]
         speech = self.store.rows(
             "SELECT text FROM messages WHERE task_id=? AND role='user' AND created BETWEEN ? AND ?",
-            (job["task_id"], start, end + 1),
+            (job["task_id"], visual_start, core_end + 1),
         )
+        task = self.store.task(job["task_id"])
+        revision = core_rows[0]["plan_revision"]
+        plan = task["plan"] if task["state"].get("plan_revision") == revision else None
+        if plan is None:
+            snapshot = self.store.one(
+                "SELECT json_extract(state,'$.plan') AS plan FROM checkpoints WHERE task_id=? "
+                "AND json_extract(state,'$.state.plan_revision') IS ? ORDER BY created DESC LIMIT 1",
+                (job["task_id"], revision),
+            )
+            plan = json.loads(snapshot["plan"]) if snapshot and snapshot["plan"] else None
+        previous = self.store.one(
+            "SELECT id,start,end,data FROM events WHERE task_id=? AND end<? ORDER BY end DESC LIMIT 1",
+            (job["task_id"], core_start),
+        )
+        previous_index = None
+        if previous:
+            previous_data = json.loads(previous["data"])
+            previous_index = {
+                "id": previous["id"],
+                "start": previous["start"],
+                "end": previous["end"],
+                "summary_not_fact": previous_data.get("summary", ""),
+                "observations_not_fact": previous_data.get("observations", []),
+                "unknowns": previous_data.get("unknowns", []),
+            }
+        task_context = {
+            "goal_intent_not_fact": task["goal"],
+            "plan_intent_not_fact": plan,
+            "capture_plan_revision": revision,
+            "capture_step_id": core_rows[0]["step_id"],
+            "owned_range": {"start": core_start, "end": core_end, "frame_ids": core_ids},
+            "continuity_context": {
+                "start": visual_start,
+                "end": visual_end,
+                "frame_ids": context_ids,
+                "previous_event_index_not_fact": previous_index,
+            },
+        }
         draft = await self.vlm.structured(
-            "按时间顺序总结此窗口的现场记录。不是完整视频，短暂动作可能缺失。不要从结果反推已经执行的动作。"
-            "观察必须注明支持它的图片 ID；推测和未知单列。重复画面不代表动作重复发生。\n"
-            "用户在这一时间段的陈述（不是视觉事实）：" + dump(speech),
+            "生成一条供后续检索的视觉事件。拼图按时间排列，必须查看全部格子。"
+            "owned_range 是本事件负责描述的新帧；continuity_context 中的前置帧和上一事件只用于识别跨边界变化，"
+            "不得把它们重复写成当前时段发生的事件。任务目标、计划、界面步骤和上一事件都是意图或可错索引，"
+            "不证明动作实际发生。只写画面可见事实与跨帧变化，不判断做对/做错。"
+            "观察必须引用拼图标签中真实的原始帧 ID（也可引用格子序号）；推测和未知单列。"
+            "短暂动作可能落在采样间隙，未观察到不等于没有发生。\n"
+            + dump(task_context)
+            + "\n用户在视觉范围内的陈述（不是视觉事实）："
+            + dump(speech),
             EventDraft,
-            images,
+            evidence,
         )
-        allowed = {im.id for im in images}
+        if len(evidence) == 1 and evidence[0].frame_ids:
+            tile_ids = evidence[0].frame_ids
+            for observation in draft.observations:
+                observation.frame_ids = [
+                    tile_ids[int(fid) - 1] if fid.isdigit() and 1 <= int(fid) <= len(tile_ids) else fid
+                    for fid in observation.frame_ids
+                ]
+        allowed = {image.id for image in images}
         for observation in draft.observations:
             if not observation.frame_ids or not set(observation.frame_ids) <= allowed:
                 raise ProviderError("事件观察缺少有效图片引用；拒绝存入事实索引")
         data = draft.model_dump()
-        data["user_statements"] = [r["text"] for r in speech]
+        data.update(
+            {
+                "user_statements": [r["text"] for r in speech],
+                "owned_frame_ids": core_ids,
+                "context_frame_ids": context_ids,
+                "visual_start": visual_start,
+                "visual_end": visual_end,
+                "previous_event_id": previous["id"] if previous else None,
+                "capture_plan_revision": revision,
+                "capture_step_id": core_rows[0]["step_id"],
+            }
+        )
         try:
             vector = await self.embeddings.encode([dump(data)])
         except ProviderError as exc:
@@ -172,12 +257,13 @@ class Memory:
             db.execute(
                 "INSERT INTO events(id,task_id,start,end,data,frame_ids,embedding,embedding_model) "
                 "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,"
+                "start=excluded.start,end=excluded.end,frame_ids=excluded.frame_ids,"
                 "revision=events.revision+1,embedding=excluded.embedding,embedding_model=excluded.embedding_model",
                 (
                     job["id"],
                     job["task_id"],
-                    start,
-                    end,
+                    core_start,
+                    core_end,
                     dump(data),
                     dump(ids),
                     dump(vector[0]) if vector else None,
@@ -185,7 +271,12 @@ class Memory:
                 ),
             )
             db.execute("UPDATE jobs SET status='done',error=NULL WHERE id=?", (job["id"],))
-        log.info("event indexed id=%s frames=%d", job["id"], len(ids))
+        log.info(
+            "event indexed id=%s core_frames=%d context_frames=%d",
+            job["id"],
+            len(core_ids),
+            len(context_ids),
+        )
 
     async def worker(self):
         last_cleanup = 0

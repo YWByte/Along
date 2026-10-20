@@ -48,16 +48,22 @@ class MemoryCatalog:
             group["start"] = frame["captured"] if group["start"] is None else group["start"]
             group["end"] = frame["captured"]
         events = store.rows(
-            "SELECT id,start,end,json_extract(data,'$.summary') AS summary,frame_ids FROM events "
-            "WHERE task_id=? AND end<=? ORDER BY start,id",
+            "SELECT id,start,end,data,frame_ids FROM events WHERE task_id=? AND end<=? ORDER BY start,id",
             (task_id, cutoff),
         )
         covered = set()
         for event in events:
+            data = json.loads(event["data"])
             ids = json.loads(event["frame_ids"])
-            members = [by_id[fid] for fid in ids if fid in by_id]
+            core_ids = data.get("owned_frame_ids") or ids
+            context_ids = data.get("context_frame_ids") or []
+            members = [by_id[fid] for fid in core_ids if fid in by_id]
             covered.update(frame["id"] for frame in members)
             keys = {(f["plan_revision"], f["step_id"]) for f in members} or {(None, None)}
+            observations = [
+                {"claim": item.get("claim", ""), "frame_ids": item.get("frame_ids", [])}
+                for item in data.get("observations", [])[:8]
+            ]
             for key in keys:
                 selected = [f for f in members if (f["plan_revision"], f["step_id"]) == key]
                 group = self.group(*key)
@@ -71,9 +77,14 @@ class MemoryCatalog:
                         "id": event["id"],
                         "start": event["start"],
                         "end": event["end"],
+                        "visual_start": data.get("visual_start", event["start"]),
+                        "visual_end": data.get("visual_end", event["end"]),
                         "frame_count": len(selected),
+                        "context_frame_count": len(context_ids),
                         "available_frame_count": sum(not f["expired"] for f in selected),
-                        "summary_not_fact": (event["summary"] or "")[:180],
+                        "summary_not_fact": (data.get("summary") or "")[:500],
+                        "observations_not_fact": observations,
+                        "unknowns": data.get("unknowns", [])[:8],
                         "status": "indexed",
                         "mixed_step_event": len(keys) > 1,
                     }

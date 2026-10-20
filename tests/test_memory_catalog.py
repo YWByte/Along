@@ -73,10 +73,14 @@ async def test_indexed_events_and_late_frames_both_appear(app):
     s1, s2, _ = directory["steps"]
     assert [e["id"] for e in s1["events"]] == ["first_event"]
     assert s1["events"][0]["summary_not_fact"] == "双手抬起，随后放下"
-    assert [e["status"] for e in s2["events"]] == ["indexed", "pending_summary"]
+    assert [e["status"] for e in s2["events"]] == [
+        "indexed",
+        "pending_summary",
+        "pending_summary",
+    ]
     result, _ = await tools.execute(MemoryCall(tool="browse", step_id="s2", plan_revision=1), 12)
     assert result["unindexed_windows"] and result["events"][0]["id"] == "partial_second"
-    assert result["unindexed_windows"][0]["start"] == typing[5]["captured"]
+    assert min(item["start"] for item in result["unindexed_windows"]) == typing[5]["captured"]
 
 
 async def test_open_step_covers_entire_step_not_last_eight_seconds(app):

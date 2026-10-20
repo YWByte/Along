@@ -84,6 +84,9 @@ class Store:
             for name, kind in (("plan_revision", "INTEGER"), ("step_id", "TEXT")):
                 if name not in columns:
                     db.execute(f"ALTER TABLE media ADD COLUMN {name} {kind}")
+            job_columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
+            if "context_count" not in job_columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN context_count INTEGER NOT NULL DEFAULT 0")
             db.execute("CREATE INDEX IF NOT EXISTS checkpoint_time ON checkpoints(task_id,created)")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS media_step ON media(task_id,plan_revision,step_id,captured)"

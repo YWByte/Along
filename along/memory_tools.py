@@ -157,21 +157,14 @@ class MemoryTools:
             return {"error": "按步骤打开时须同时指定 plan_revision，避免不同版本同名步骤混用。"}, []
         clauses = ["task_id=?", "kind='frame'", "expired=0", "captured<=?"]
         args = [self.task_id, self.cutoff]
-        for key in ("step_id", "plan_revision"):
-            if getattr(call, key) is not None:
-                clauses.append(f"{key}=?")
-                args.append(getattr(call, key))
         if event:
-            tags = self.store.rows(
-                "SELECT DISTINCT plan_revision,step_id FROM media WHERE task_id=? "
-                "AND id IN (SELECT value FROM json_each(?))",
-                (self.task_id, event["frame_ids"]),
-            )
-            if len(tags) == 1:
-                for key in ("step_id", "plan_revision"):
-                    if getattr(call, key) is None:
-                        clauses.append(f"{key} IS ?")
-                        args.append(tags[0][key])
+            clauses.append("id IN (SELECT value FROM json_each(?))")
+            args.append(event["frame_ids"])
+        else:
+            for key in ("step_id", "plan_revision"):
+                if getattr(call, key) is not None:
+                    clauses.append(f"{key}=?")
+                    args.append(getattr(call, key))
         if call.tool == "current":
             clauses.append("origin='camera'")
         where = " AND ".join(clauses)
@@ -180,8 +173,11 @@ class MemoryTools:
             return {"error": "此范围没有可用图片，不能据此判断动作未发生。"}, []
         low, high = call.start_time, call.end_time
         if event:
-            low = max(event["start"] - 2, low) if low is not None else event["start"] - 2
-            high = min(event["end"] + 2, high) if high is not None else event["end"] + 2
+            event_data = json.loads(event["data"])
+            event_low = event_data.get("visual_start", event["start"])
+            event_high = event_data.get("visual_end", event["end"])
+            low = max(event_low, low) if low is not None else event_low
+            high = min(event_high, high) if high is not None else event_high
         elif call.tool == "open" and call.step_id is not None and low is None and high is None:
             low = self.store.one("SELECT MIN(captured) AS t FROM media WHERE " + where, args)["t"]
             high = latest
@@ -201,8 +197,9 @@ class MemoryTools:
                 "start": low,
                 "end": high,
             }, []
+        use_sheet = call.tool == "open" and (call.sheet or event is not None)
         count = call.frames if "frames" in call.model_fields_set else self.settings.clip_frames
-        if call.sheet and call.tool == "open":
+        if use_sheet:
             # A sheet costs one image slot no matter how many tiles it packs.
             count = call.frames if "frames" in call.model_fields_set else self.settings.sheet_frames
             if capacity <= 0:
@@ -230,7 +227,7 @@ class MemoryTools:
             else:
                 missing += 1
         layout = "frames"
-        if call.sheet and call.tool == "open" and len(images) >= 2:
+        if use_sheet and len(images) >= 2:
             images = [self.memory.sheet(images, frames)]
             for tile, frame in enumerate(frames, 1):
                 frame["tile"] = tile

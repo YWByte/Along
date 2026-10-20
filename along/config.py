@@ -20,7 +20,9 @@ class Settings(BaseSettings):
     token_file: Path = Path("/Users/wondery/Work/tools/proxy/.env")
     port: int = 8766
     request_timeout: float = 90
-    event_window: int = Field(default=30, ge=10, le=300)
+    event_window: int = Field(default=10, ge=10, le=300)
+    event_frames: int = Field(default=10, ge=2, le=24)
+    event_overlap_frames: int = Field(default=2, ge=0, le=4)
     frame_interval: int = Field(default=1, ge=1, le=30)
     max_storage_mb: int = Field(default=4096, ge=100)
     retention_days: int = Field(default=7, ge=1)

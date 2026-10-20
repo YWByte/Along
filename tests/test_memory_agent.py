@@ -44,6 +44,7 @@ def event(store, task_id, eid, frames, summary="手腕活动", embedding=None):
 def test_defaults_one_frame_per_second():
     settings = Settings(_env_file=None)
     assert settings.frame_interval == 1
+    assert settings.event_frames == 10 and settings.event_overlap_frames == 2
     assert settings.clip_frames == 8 and settings.max_images == 12
     assert settings.memory_rounds == 3
 
@@ -79,7 +80,8 @@ async def test_browse_search_open_and_step_filter(app):
     result, _ = await tools.execute(MemoryCall(tool="browse", plan_revision=1, step_id="s1"), 12)
     assert [e["id"] for e in result["events"]] == ["old"]
     result, images = await tools.execute(MemoryCall(tool="open", event_id="old"), 12)
-    assert images and result["start"] < frames[0]["captured"]
+    assert len(images) == 1 and result["layout"] == "sheet"
+    assert result["start"] == frames[0]["captured"]
     with store.tx() as db:
         db.execute("UPDATE events SET data=? WHERE id='old'", (dump({"summary": "饼干整形"}),))
     result, _ = await tools.execute(MemoryCall(tool="search", query="饼干"), 12)
@@ -234,11 +236,14 @@ async def test_index_windows_do_not_cross_ui_revision(app):
         db.execute("UPDATE media SET plan_revision=1,step_id='s1' WHERE seq<10")
         db.execute("UPDATE media SET plan_revision=2,step_id='s2' WHERE seq>=10")
     app.state.memory.schedule()
+    await app.state.memory.process(store.one("SELECT * FROM jobs"))
     app.state.memory.schedule()
     jobs = store.rows("SELECT * FROM jobs ORDER BY available")
     assert len(jobs) == 2
-    assert set(json.loads(jobs[0]["frame_ids"])) == {f["id"] for f in frames[:10]}
-    assert set(json.loads(jobs[1]["frame_ids"])) <= {f["id"] for f in frames[10:]}
+    assert json.loads(jobs[0]["frame_ids"]) == [f["id"] for f in frames[:10]]
+    assert jobs[0]["context_count"] == 0
+    assert json.loads(jobs[1]["frame_ids"]) == [f["id"] for f in frames[8:20]]
+    assert jobs[1]["context_count"] == 2
 
 
 async def test_semantic_sampling_bounded_across_long_task(app):
@@ -288,8 +293,8 @@ def test_agent_search_then_open_rechecks_raw_images(app, client):
             assert not images
             assert trace[0]["result"]["events"][0]["id"] == "target"
             return Answer(reply="", memory=MemoryCall(tool="open", event_id="target"))
-        assert len(images) == 8
-        return Answer(reply="只说明可见的动作变化。", evidence_ids=[images[0].id])
+        assert len(images) == 1 and len(images[0].frame_ids) == 10
+        return Answer(reply="只说明可见的动作变化。", evidence_ids=[images[0].frame_ids[0]])
 
     app.state.engine.vlm.structured = respond
     result = ask(client, "之前侧偏那段怎么样", task_id=task["id"]).json()
@@ -428,3 +433,61 @@ def test_ignored_evidence_feedback_never_publishes_premature_evaluation(app, cli
     result = ask(client, "刚才做的过程对吗", task_id=task["id"]).json()
     assert "完全正确" not in result["reply"] and result["suggestion"] is None
     assert result["warnings"]
+
+
+async def test_ten_frame_events_overlap_and_inherit_previous_index(app):
+    task, frames = active_frames(app, 25)
+    memory, store = app.state.memory, app.state.store
+    prompts = []
+    original = memory.vlm.structured
+
+    async def capture(prompt, schema, images=None):
+        if schema.__name__ == "EventDraft":
+            prompts.append(prompt)
+            assert len(images) == 1
+        return await original(prompt, schema, images)
+
+    memory.vlm.structured = capture
+    memory.schedule()
+    await memory.process(store.one("SELECT * FROM jobs WHERE status='pending'"))
+    memory.schedule()
+    await memory.process(store.one("SELECT * FROM jobs WHERE status='pending'"))
+    task = store.change(task["id"], task["version"], lambda r, s, p, db: ("paused", s, p, "pause", {}))
+    memory.schedule()
+    jobs = store.rows("SELECT * FROM jobs ORDER BY available,id")
+
+    assert [job["context_count"] for job in jobs] == [0, 2, 2]
+    assert json.loads(jobs[0]["frame_ids"]) == [f["id"] for f in frames[:10]]
+    assert json.loads(jobs[1]["frame_ids"]) == [f["id"] for f in frames[8:20]]
+    assert json.loads(jobs[2]["frame_ids"]) == [f["id"] for f in frames[18:25]]
+
+    events = store.rows("SELECT * FROM events ORDER BY start")
+    second = events[1]
+    data = json.loads(second["data"])
+
+    assert second["start"] == frames[10]["captured"]
+    assert second["end"] == frames[19]["captured"]
+    assert data["owned_frame_ids"] == [f["id"] for f in frames[10:20]]
+    assert data["context_frame_ids"] == [f["id"] for f in frames[8:10]]
+    assert data["previous_event_id"] == events[0]["id"]
+    assert task["goal"] in prompts[1] and events[0]["id"] in prompts[1]
+
+
+def test_recent_partial_window_waits_but_paused_task_flushes(app):
+    store, memory = app.state.store, app.state.memory
+    task = store.create_task("短时安装操作")
+    task = store.change(task["id"], 1, lambda r, s, p, db: ("active", s, p, "start", {}))
+    now = time.time()
+    for index in range(5):
+        memory.media.save(
+            f"recent_{index}", image_bytes(), task["id"], "conversation1", now + index * 0.001, index
+        )
+
+    memory.schedule()
+    assert not store.rows("SELECT * FROM jobs")
+
+    store.change(task["id"], task["version"], lambda r, s, p, db: ("paused", s, p, "pause", {}))
+    memory.schedule()
+    job = store.one("SELECT * FROM jobs")
+    assert json.loads(job["frame_ids"]) == [f"recent_{index}" for index in range(5)]
+    assert job["context_count"] == 0

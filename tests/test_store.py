@@ -45,7 +45,10 @@ def test_recovery(tmp_path):
     task = store.create_task("test")
     store.begin_request("r", "h")
     with store.tx() as db:
-        db.execute("INSERT INTO jobs VALUES('j',?,'[]','running',1,0,NULL)", (task["id"],))
+        db.execute(
+            "INSERT INTO jobs(id,task_id,frame_ids,status,attempts,available,error) VALUES('j',?,'[]','running',1,0,NULL)",
+            (task["id"],),
+        )
     store.close()
     store = Store(tmp_path)
     assert store.one("SELECT status FROM jobs")["status"] == "pending"

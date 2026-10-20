@@ -216,7 +216,8 @@ async def test_event_open_respects_explicit_subrange_and_before_time(app):
         ),
         12,
     )
-    assert [im.id for im in images] == [f["id"] for f in frames[10:15]]
+    assert len(images) == 1
+    assert list(images[0].frame_ids) == [f["id"] for f in frames[10:15]]
     assert result["selected_gap_seconds"] == 1
 
 
