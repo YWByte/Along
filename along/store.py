@@ -240,11 +240,19 @@ class Store:
             )
         return rows[::-1]
 
-    def message(self, conversation_id, task_id, role, text, data=None):
+    def message(self, conversation_id, task_id, role, text, data=None, created=None):
         with self.tx() as db:
             db.execute(
                 "INSERT INTO messages VALUES(?,?,?,?,?,?,?)",
-                (uid("msg"), conversation_id, task_id, role, text, dump(data) if data else None, time.time()),
+                (
+                    uid("msg"),
+                    conversation_id,
+                    task_id,
+                    role,
+                    text,
+                    dump(data) if data else None,
+                    created if created is not None else time.time(),
+                ),
             )
 
     def begin_request(self, request_id, fingerprint):
@@ -285,6 +293,11 @@ class Store:
             db.execute("DELETE FROM requests")
         for row in paths:
             (self.directory / row["path"]).unlink(missing_ok=True)
+        # Sheets may contain the deleted task's frames; they are caches and rebuild on demand.
+        sheets = self.directory / "media" / "sheets"
+        if sheets.is_dir():
+            for path in sheets.glob("*.jpg"):
+                path.unlink(missing_ok=True)
 
     def close(self):
         self.conn.close()

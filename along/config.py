@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     memory_recent_seconds: int = Field(default=30, ge=10, le=120)
     memory_results: int = Field(default=5, ge=1, le=10)
     clip_frames: int = Field(default=8, ge=2, le=12)
+    sheet_frames: int = Field(default=24, ge=4, le=24)
     clip_seconds: int = Field(default=8, ge=2, le=120)
     memory_candidates: int = Field(default=512, ge=40, le=4096)
     memory_catalog_chars: int = Field(default=24000, ge=4000, le=100000)

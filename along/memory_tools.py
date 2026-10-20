@@ -8,6 +8,7 @@ import numpy as np
 
 from along.indexing import terms
 from along.memory_catalog import MemoryCatalog
+from along.sheets import dense_pick
 from along.providers.vlm import ProviderError
 from along.schemas import MemoryCall
 
@@ -200,7 +201,14 @@ class MemoryTools:
                 "start": low,
                 "end": high,
             }, []
-        count = min(capacity, call.frames if "frames" in call.model_fields_set else self.settings.clip_frames)
+        count = call.frames if "frames" in call.model_fields_set else self.settings.clip_frames
+        if call.sheet and call.tool == "open":
+            # A sheet costs one image slot no matter how many tiles it packs.
+            count = call.frames if "frames" in call.model_fields_set else self.settings.sheet_frames
+            if capacity <= 0:
+                count = 0
+        else:
+            count = min(capacity, count)
         if call.tool == "current":
             count = min(count, 1)
         if count <= 0:
@@ -214,16 +222,19 @@ class MemoryTools:
         images, frames = [], []
         missing = 0
         # Uniform time coverage preserves the start/middle/end, never significance-ranked single frames.
-        for index in (
-            sorted(set(np.linspace(0, len(rows) - 1, min(len(rows), count), dtype=int))) if rows else []
-        ):
-            row = rows[index]
+        for row in dense_pick(rows, count):
             image = self.memory.image(row["id"])
             if image:
                 images.append(image)
                 frames.append(row)
             else:
                 missing += 1
+        layout = "frames"
+        if call.sheet and call.tool == "open" and len(images) >= 2:
+            images = [self.memory.sheet(images, frames)]
+            for tile, frame in enumerate(frames, 1):
+                frame["tile"] = tile
+            layout = "sheet"
         gaps = [b["captured"] - a["captured"] for a, b in zip(rows, rows[1:])]
         selected_gaps = [b["captured"] - a["captured"] for a, b in zip(frames, frames[1:])]
         return {
@@ -236,7 +247,12 @@ class MemoryTools:
             "missing_files": missing,
             "largest_recorded_gap_seconds": round(max(gaps), 3) if gaps else None,
             "last_frame_age_seconds": round(self.cutoff - frames[-1]["captured"], 1) if frames else None,
-            "sampling": "按时间排序的离散图片，不是连续视频。不能推断未拍到的动作、精确次数/速度、痛感或安全。界面步骤不代表实际动作。",
+            "layout": layout,
+            "sheet_id": images[0].id if layout == "sheet" else None,
+            "sampling": (
+                "拼图按从左到右、从上到下的时间顺序排列，tile 编号对应 frames。" if layout == "sheet" else ""
+            )
+            + "按时间排序的离散图片，不是连续视频。不能推断未拍到的动作、精确次数/速度、痛感或安全。界面步骤不代表实际动作。",
             "error": None if images else "此范围原图不可用或没有记录；不能当作动作未发生。",
         }, images
 

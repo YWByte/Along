@@ -25,6 +25,12 @@ class ImageInput:
     id: str
     path: Path
     label: str = ""
+    # Non-empty for a contact sheet: the recorded frames packed into it, in tile order.
+    frame_ids: tuple[str, ...] = ()
+
+    @property
+    def evidence(self):
+        return self.frame_ids or (self.id,)
 
 
 class VLMProvider(Protocol):

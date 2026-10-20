@@ -143,6 +143,11 @@ class MediaStore:
             with self.store.tx() as db:
                 db.execute("UPDATE media SET expired=1 WHERE id=?", (row["id"],))
             (self.store.directory / row["path"]).unlink(missing_ok=True)
+        # Contact sheets are regenerable caches; drop them after a day so deleted frames do not linger.
+        sheets = self.store.directory / "media" / "sheets"
+        for path in sheets.glob("*.jpg") if sheets.is_dir() else []:
+            if path.stat().st_mtime < time.time() - 86400:
+                path.unlink(missing_ok=True)
 
     def path(self, media_id):
         row = self.store.one("SELECT * FROM media WHERE id=?", (media_id,))

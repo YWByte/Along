@@ -407,6 +407,18 @@ body.thinking .activity::before {
   background: #fde9e3;
   color: var(--accent-ink);
 }
+.thread .verdict {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.thread .v-ok {
+  color: var(--ok);
+}
+.thread .v-adjust {
+  color: var(--accent-ink);
+}
 .thread .headline {
   display: block;
   font-size: 15px;
@@ -841,6 +853,54 @@ body[data-stage="run"] main {
   padding-left: 18px;
   color: #cfc9bc;
   font-size: 14px;
+}
+.answer .verdict {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 1px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: #ffffff1f;
+  color: #e9e4d8;
+}
+.answer.verdict-ok .verdict {
+  background: var(--ok);
+  color: #fff;
+}
+.answer.verdict-adjust .verdict {
+  background: var(--accent);
+  color: #fff;
+}
+.answer .criteria {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  font-size: 14px;
+}
+.answer .criteria li {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+}
+.answer .criteria .mark {
+  flex: none;
+  width: 16px;
+  font-family: var(--mono);
+  text-align: center;
+}
+.answer .criteria .c-met .mark {
+  color: #7fd19f;
+}
+.answer .criteria .c-not_met .mark {
+  color: #ff8a73;
+}
+.answer .criteria .c-unseen {
+  color: #a8a294;
+}
+.answer.compact .verdict {
+  margin-bottom: 2px;
 }
 .answer .warning {
   color: #f4b46b;

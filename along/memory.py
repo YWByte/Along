@@ -11,6 +11,7 @@ from along.config import Settings
 from along.indexing import terms
 from along.media import MediaStore
 from along.providers.vlm import ImageInput, ProviderError, VLMProvider
+from along.sheets import contact_sheet, sheet_id
 from along.schemas import EventDraft, FrameSelection, Rank, SearchQuery
 from along.store import Store, dump
 
@@ -110,6 +111,22 @@ class Memory:
             )
         except KeyError:
             return None
+
+    def sheet(self, images, frames):
+        ids = [image.id for image in images]
+        sid = sheet_id(ids)
+        target = self.store.directory / "media" / "sheets" / f"{sid}.jpg"
+        if not target.is_file():
+            contact_sheet([image.path for image in images], [f["captured"] for f in frames], target)
+        start, end = frames[0]["captured"], frames[-1]["captured"]
+        tiles = "；".join(f"{i}={fid}" for i, fid in enumerate(ids, 1))
+        return ImageInput(
+            sid,
+            target,
+            f"带时间标注的拼图，{len(ids)} 帧，记录时间 Unix {start:.3f}–{end:.3f}，"
+            f"每格左上角为序号和相对首帧秒数，阅读顺序从左到右、从上到下。序号对应帧ID：{tiles}",
+            tuple(ids),
+        )
 
     async def process(self, job):
         ids = json.loads(job["frame_ids"])

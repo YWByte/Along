@@ -20,6 +20,7 @@ class Step(BaseModel):
     title: str = Field(max_length=300)
     instruction: str = Field(max_length=2000)
     checks: list[str] = Field(default_factory=list, max_length=10)
+    look_for: list[str] = Field(default_factory=list, max_length=3)
     source_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
@@ -48,7 +49,7 @@ Scenario = Literal["installation", "exercise", "general"]
 
 class ReviewFocus(BaseModel):
     temporal_scope: Literal[
-        "unspecified", "last_completed", "after_previous_answer", "recent", "explicit"
+        "unspecified", "current_step", "last_completed", "after_previous_answer", "recent", "explicit"
     ] = "unspecified"
     subject: str = Field(max_length=500)
     step_id: str | None = Field(default=None, max_length=60)
@@ -107,10 +108,13 @@ class MemoryCall(BaseModel):
     step_id: str | None = Field(default=None, max_length=60)
     plan_revision: int | None = Field(default=None, ge=0)
     seconds: int = Field(default=8, ge=1, le=120)
-    frames: int = Field(default=8, ge=2, le=12)
+    frames: int = Field(default=8, ge=2, le=24)
+    sheet: bool = False
 
     @model_validator(mode="after")
     def valid_range(self):
+        if self.frames > 12 and not self.sheet:
+            raise ValueError("超过12帧时须使用 sheet=true 拼成一张带时间标注的拼图")
         if self.allow_older and (self.tool != "open" or not self.reason.strip()):
             raise ValueError("向更早记录追溯只适用于open，且必须说明原因")
         if self.start_time is not None and self.end_time is not None and self.start_time > self.end_time:
@@ -133,11 +137,23 @@ class VisualReview(BaseModel):
     needs_detail: bool = False
 
 
+class CriterionResult(BaseModel):
+    criterion: str = Field(min_length=1, max_length=300)
+    status: Literal["met", "not_met", "unseen"]
+    frame_ids: list[str] = Field(default_factory=list, max_length=6)
+
+
+Verdict = Literal["ok", "adjust", "unclear", "none"]
+
+
 class AnswerAudit(BaseModel):
     action: Literal["keep", "revise"]
     unsupported_claims: list[str] = Field(default_factory=list, max_length=4)
     corrected_reply: str = Field(default="", max_length=1600)
     corrected_headline: str = Field(default="", max_length=80)
+    corrected_verdict: Verdict = "none"
+    corrected_criteria: list[CriterionResult] = Field(default_factory=list, max_length=4)
+    corrected_suggestion: str | None = Field(default=None, max_length=2000)
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
@@ -152,6 +168,8 @@ class Answer(BaseModel):
     research: ResearchDecision | None = None
     reply: str = Field(max_length=5000)
     headline: str = Field(default="", max_length=80)
+    verdict: Verdict = "none"
+    criteria: list[CriterionResult] = Field(default_factory=list, max_length=4)
     observed: list[str] = Field(default_factory=list, max_length=10)
     hypotheses: list[str] = Field(default_factory=list, max_length=10)
     missing: list[str] = Field(default_factory=list, max_length=10)

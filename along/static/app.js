@@ -307,6 +307,8 @@ async function viewSource(id) {
   );
   if (!$("evidence-dialog").open) $("evidence-dialog").showModal();
 }
+const VERDICTS = { ok: "做对了", adjust: "调整一下", unclear: "看不清" };
+const MARKS = { met: "✓", not_met: "✗", unseen: "?" };
 function headlineOf(data, text) {
   const h = (data.headline || "").trim();
   if (h) return h;
@@ -390,6 +392,10 @@ function message(role, text, data = {}) {
   const box = element("article", undefined, role);
   if (role === "assistant") {
     const headline = headlineOf(data, text);
+    if (VERDICTS[data.verdict])
+      box.append(
+        element("span", VERDICTS[data.verdict], `verdict v-${data.verdict}`),
+      );
     if (headline) box.append(element("strong", headline, "headline"));
     if (text && text.trim() !== headline) box.append(element("p", text));
     if (mode === "task" && data.suggestion)
@@ -440,8 +446,21 @@ function showAnswer(data, error = "") {
   }
   lastAnswer = data;
   const headline = headlineOf(data, data.reply) || data.reply;
-  card.append(close, element("strong", headline, "headline"));
+  const verdict = VERDICTS[data.verdict];
+  if (verdict) card.classList.add(`verdict-${data.verdict}`);
+  card.append(close);
+  if (verdict) card.append(element("span", verdict, "verdict"));
+  card.append(element("strong", headline, "headline"));
   const detail = element("div", undefined, "detail");
+  if (data.criteria?.length) {
+    const ul = element("ul", undefined, "criteria");
+    for (const c of data.criteria) {
+      const li = element("li", c.criterion, `c-${c.status}`);
+      li.prepend(element("span", MARKS[c.status], "mark"));
+      ul.append(li);
+    }
+    detail.append(ul);
+  }
   if (data.reply && data.reply.trim() !== headline)
     detail.append(element("p", data.reply));
   if (data.suggestion)
@@ -858,9 +877,10 @@ function renderRun(task) {
       element("h2", step.title),
       element("p", step.instruction, "instruction"),
     );
-    if (step.checks.length) {
+    const marks = [...(step.look_for || []), ...step.checks].slice(0, 3);
+    if (marks.length) {
       card.append(element("p", "做到这样就可以", "label"));
-      card.append(list(step.checks.slice(0, 3), "ticks"));
+      card.append(list(marks, "ticks"));
     }
     content.append(card);
   }

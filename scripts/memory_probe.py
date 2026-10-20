@@ -19,7 +19,7 @@ import uuid
 from along.api import create_app
 from along.config import Settings
 from along.memory_tools import MemoryTools
-from along.schemas import ChatInput
+from along.schemas import ChatInput, PlanDraft
 from along.store import dump
 
 
@@ -83,6 +83,36 @@ def snapshot(source_dir, target, task_id, cutoff, raw_only=False):
         destination.close()
 
 
+async def backfill_look_for(app, task_id):
+    """Older plans predate look_for; regenerate only those fields under the current planning rules."""
+    from along.scenarios import skill
+
+    store, engine = app.state.store, app.state.engine
+    task = store.task(task_id)
+    revised = await engine.vlm.structured(
+        "为已确认的操作表补充每步的 look_for，其余字段原样保留，步骤数量、ID、顺序不变。"
+        "look_for 为每步写1至3条镜头能直接看到的完成标准，写具体部位/对象的位置、朝向或运动方向；"
+        "不写感受、次数、力度、速度等画面无法判断的内容。"
+        + skill(task["state"].get("scenario"))["planning"]
+        + "\n"
+        + dump(task["plan"]),
+        PlanDraft,
+    )
+    by_id = {step.id: step.look_for for step in revised.steps}
+    plan = task["plan"]
+    for step in plan["steps"]:
+        step["look_for"] = by_id.get(step["id"], [])
+    with store.tx() as db:
+        db.execute("UPDATE tasks SET plan=? WHERE id=?", (dump(plan), task_id))
+        for row in db.execute("SELECT id,state FROM checkpoints WHERE task_id=?", (task_id,)).fetchall():
+            state = json.loads(row["state"])
+            if state.get("plan"):
+                for step in state["plan"]["steps"]:
+                    step["look_for"] = by_id.get(step["id"], [])
+                db.execute("UPDATE checkpoints SET state=? WHERE id=?", (dump(state), row["id"]))
+    print(dump({"backfilled_look_for": by_id}), flush=True)
+
+
 async def main(args):
     with tempfile.TemporaryDirectory(prefix="along-memory-replay-") as tmp:
         directory = Path(tmp)
@@ -91,6 +121,8 @@ async def main(args):
             Settings(data_dir=directory, worker_enabled=False, semantic_enabled=False), web=NoWeb()
         )
         async with app.router.lifespan_context(app):
+            if args.with_look_for:
+                await backfill_look_for(app, args.task_id)
             frame = app.state.store.one(
                 "SELECT id FROM media WHERE task_id=? AND kind='frame' ORDER BY captured DESC LIMIT 1",
                 (args.task_id,),
@@ -115,8 +147,8 @@ async def main(args):
             )
             tools = result.get("retrieval", {}).get("tools", [])
             assert any(entry["call"]["tool"] == "open" for entry in tools), "Agent did not open a clip"
-            assert 4 <= len(result["retrieval"]["frames"]) <= 37, "Agent exceeded session image budget"
-            assert all(len(t["result"].get("frames", [])) <= 12 for t in tools)
+            assert 4 <= len(result["retrieval"]["frames"]) <= 72, "Agent exceeded session image budget"
+            assert all(len(t["result"].get("frames", [])) <= 24 for t in tools)
             if args.expected_after is not None:
                 new_frames = {
                     f["id"]
@@ -170,6 +202,7 @@ if __name__ == "__main__":
     parser.add_argument("--expected-focus")
     parser.add_argument("--expected-after", type=float)
     parser.add_argument("--expected-revision", type=int, default=1)
+    parser.add_argument("--with-look-for", action="store_true", help="Backfill look_for for older plans")
     parser.add_argument("--raw-only", action="store_true", help="Simulate summaries not yet being available")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     asyncio.run(main(parser.parse_args()))

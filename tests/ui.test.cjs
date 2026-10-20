@@ -546,3 +546,48 @@ test("执行页先显示一句结论，可收起；方向键推进步骤，暂�
   await page.keyboard.press("ArrowRight");
   assert.equal(model.task.state.steps.s1, "needs_recheck");
 });
+
+test("过程回答显示判断标签与逐条标准；步骤显示可见标准", async (t) => {
+  const task = draft();
+  task.status = "active";
+  task.state.plan_confirmed = true;
+  task.plan.steps[0].look_for = ["左右两堆分开摆放"];
+  const { page } = await setup(t, task, {
+    chatResult: {
+      headline: "差一点：右边混进了一件",
+      reply: "左边已分好。",
+      verdict: "adjust",
+      suggestion: "把右边那件移到左边",
+      criteria: [
+        { criterion: "左右两堆分开摆放", status: "met", frame_ids: [] },
+        { criterion: "同类物品在同一堆", status: "not_met", frame_ids: [] },
+        { criterion: "标签朝上", status: "unseen", frame_ids: [] },
+      ],
+    },
+  });
+  await page.click("#enter-task");
+  await page.waitForFunction(
+    () => document.getElementById("camera").videoWidth > 0,
+  );
+  assert.match(
+    await page.locator(".current-step").textContent(),
+    /左右两堆分开摆放/,
+  );
+  await ask(page, "这样对吗");
+  assert.equal(
+    await page.locator("#answer .verdict").textContent(),
+    "调整一下",
+  );
+  assert.ok(
+    await page
+      .locator("#answer")
+      .evaluate((n) => n.classList.contains("verdict-adjust")),
+  );
+  assert.equal(await page.locator("#answer .criteria li").count(), 3);
+  assert.equal(
+    await page.locator("#answer .criteria .c-not_met .mark").textContent(),
+    "✗",
+  );
+  assert.match(await page.locator("#answer .try").textContent(), /移到左边/);
+  await page.screenshot({ path: "/tmp/along-build/ui/verdict.png" });
+});
