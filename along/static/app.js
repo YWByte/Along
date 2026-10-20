@@ -1,6 +1,17 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
-const conversation = (sessionStorage.alongConversation ||= crypto.randomUUID());
+let mode = "home";
+let conversation = "";
+let photoCaptured = null;
+let photoURL = null;
+let cameraPending = false;
+let voiceBusy = false;
+let ready = false;
+let refreshNumber = 0;
+function conversationFor(name) {
+  const key = `along-${name}-conversation`;
+  return (sessionStorage[key] ||= crypto.randomUUID());
+}
 let token = "",
   config = {},
   current = null,
@@ -13,13 +24,9 @@ let busy = false,
   voiceRecorder,
   voiceStream,
   voiceTimer;
-let clipRecorder = null,
-  clipTimer = null,
-  captureGeneration = 0,
-  seq = 0,
+let seq = 0,
   lastTaskRender = "";
-let recordingTask = null,
-  queueDB,
+let queueDB,
   queueSending = false,
   queueError = "";
 const blobURLs = new Set();
@@ -83,15 +90,152 @@ async function json(path, options = {}) {
 }
 function setBusy(value, message = "正在结合现场与记录分析…") {
   busy = value;
-  $("send").disabled = value;
+  if (value) refreshNumber++;
+  updateControls();
   $("activity").textContent = value ? message : "";
 }
-function speak(text) {
-  if (!$("speak").checked || !("speechSynthesis" in window)) return;
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "zh-CN";
-  speechSynthesis.speak(u);
+function updateControls() {
+  const locked = busy || voiceBusy || cameraPending;
+  const preparing = mode === "task" && !!current?.state.preparing;
+  $("back-home").disabled = locked;
+  $("enter-task").disabled = !ready || locked;
+  $("enter-instant").disabled = !ready || locked;
+  $("question").disabled =
+    busy || preparing || (mode === "instant" && !pickedImage);
+  $("send").disabled =
+    locked || preparing || (mode === "instant" && !pickedImage);
+  $("mic").disabled =
+    busy ||
+    preparing ||
+    cameraPending ||
+    (voiceBusy && voiceRecorder?.state !== "recording") ||
+    (mode === "instant" && !pickedImage);
+  $("take-photo").disabled = locked || !stream;
+  $("retake-photo").disabled = locked;
+  $("camera-toggle").disabled = locked;
+  for (const button of document.querySelectorAll(
+    "#task-panel button, #task-more button, #task-more input, #task-more select",
+  )) {
+    button.disabled = locked || !!current?.state.preparing;
+  }
+}
+function renderScreen() {
+  const taskMode = mode === "task";
+  const executing = taskMode && current?.state.plan_confirmed;
+  $("home").hidden = mode !== "home";
+  $("session").hidden = mode === "home";
+  $("mode-title").textContent = taskMode ? "任务模式" : "识别模式";
+  $("stage").textContent = taskMode
+    ? executing
+      ? "一起操作"
+      : current
+        ? "确认方案"
+        : "说目标"
+    : "";
+  $("camera-panel").hidden = !(mode === "instant" || executing);
+  $("workspace").classList.toggle(
+    "single-column",
+    !(mode === "instant" || executing),
+  );
+  $("task-panel").hidden = !taskMode || !current;
+  $("task-more").hidden = !taskMode || !current;
+  $("privacy-note").hidden = mode !== "instant";
+  $("camera-title").textContent = taskMode ? "操作现场" : "拍下你想问的东西";
+  $("take-photo").hidden = mode !== "instant" || !!pickedImage;
+  $("retake-photo").hidden = mode !== "instant" || !pickedImage;
+  $("camera-toggle").hidden = !!stream || !!pickedImage;
+  $("camera-hint").textContent = taskMode
+    ? current?.status === "active"
+      ? stream
+        ? "正在记录过程，遇到问题随时问我。"
+        : "相机未开启，当前没有记录画面；请重试开启相机。"
+      : "任务已暂停，不记录画面。"
+    : pickedImage
+      ? "将用这张照片回答；可以继续追问，也可以重拍。"
+      : "先拍照，再输入问题或语音提问。";
+  $("chat-heading").textContent = !taskMode
+    ? "有什么想问的？"
+    : !current
+      ? "我们一起做什么？"
+      : executing
+        ? "遇到问题，随时问我"
+        : "需要调整什么？";
+  $("chat-hint").textContent = !taskMode
+    ? ""
+    : !current
+      ? "告诉我目标，我会查找资料，与你确认方案。"
+      : executing
+        ? "结合当前画面与之前的过程，帮你判断下一步。"
+        : "核对准备条件；有不适用的地方，直接告诉我。";
+  $("question").placeholder = !taskMode
+    ? "针对这张照片提问…"
+    : !current
+      ? "例如：带我做一份曲奇饼干"
+      : executing
+        ? "这一步遇到了什么问题？"
+        : "例如：我没有烤箱，需要调整方案…";
+  $("messages").hidden = !$("messages").children.length;
+  updateControls();
+}
+function clearPhoto() {
+  pickedImage = null;
+  photoCaptured = null;
+  if (photoURL) URL.revokeObjectURL(photoURL);
+  photoURL = null;
+  $("uploaded-preview").removeAttribute("src");
+  $("uploaded-preview").hidden = true;
+}
+async function enterMode(next) {
+  if (!ready || busy || voiceBusy || cameraPending || mode !== "home") return;
+  mode = next;
+  conversation = conversationFor(next);
+  clearPhoto();
+  $("question").value = "";
+  $("messages").replaceChildren();
+  if (next === "instant") {
+    // New visits must never reuse an unseen photo from an earlier session.
+    conversation = sessionStorage["along-instant-conversation"] =
+      crypto.randomUUID();
+  }
+  renderScreen();
+  if (next === "instant" || current?.status === "active") await openCamera();
+  if (next === "task") {
+    setBusy(true, "正在恢复对话…");
+    try {
+      await refreshMessages(current?.id || null);
+    } finally {
+      setBusy(false);
+    }
+  }
+}
+async function goHome() {
+  if (busy || voiceBusy || cameraPending) return;
+  if (mode === "task" && current?.status === "active") {
+    if (!confirm("返回首页会暂停任务并停止记录，是否继续？")) return;
+    await mutate("pause");
+  }
+  await stopCamera();
+  clearPhoto();
+  mode = "home";
+  $("task-more").open = false;
+  renderScreen();
+}
+async function openCamera() {
+  if (stream || cameraPending) return;
+  cameraPending = true;
+  $("camera-placeholder").textContent = "请允许浏览器使用相机…";
+  $("camera-placeholder").hidden = false;
+  updateControls();
+  try {
+    await startCamera();
+  } catch (e) {
+    $("camera-placeholder").textContent =
+      "无法打开相机，请检查浏览器权限或设备连接，再点击重试。";
+    toast(errorText(e));
+  } finally {
+    cameraPending = false;
+    renderScreen();
+  }
 }
 function linkButton(label, callback) {
   const b = element("button", label);
@@ -124,36 +268,34 @@ async function viewSource(id) {
 function message(role, text, data = {}) {
   const box = element("article", undefined, role);
   box.append(element("p", text));
-  for (const [key, label] of [
-    ["observed", "观察"],
-    ["hypotheses", "可能解释"],
-    ["missing", "还缺什么"],
-    ["checks", "继续前检查"],
-  ]) {
-    if (data[key]?.length) {
+  if (mode === "task") {
+    for (const [key, label] of [
+      ["missing", "还需确认"],
+      ["checks", "继续前检查"],
+    ]) {
+      if (data[key]?.length) {
+        box.append(element("strong", label));
+        const ul = element("ul");
+        data[key].forEach((t) => ul.append(element("li", t)));
+        box.append(ul);
+      }
+    }
+    if (data.evidence_ids?.length || data.source_ids?.length) {
       const d = element("details");
-      if (key === "checks") d.open = true;
-      d.append(element("summary", label));
-      const ul = element("ul");
-      data[key].forEach((t) => ul.append(element("li", t)));
-      d.append(ul);
+      d.append(element("summary", "查看依据"));
+      data.evidence_ids?.forEach((id, i) =>
+        d.append(linkButton(`过程图片 ${i + 1}`, () => viewMedia(id))),
+      );
+      data.source_ids?.forEach((id, i) =>
+        d.append(linkButton(`参考资料 ${i + 1}`, () => viewSource(id))),
+      );
       box.append(d);
     }
   }
-  if (data.evidence_ids?.length) {
-    const d = element("div");
-    data.evidence_ids.forEach((id, i) =>
-      d.append(linkButton(`图片依据 ${i + 1}`, () => viewMedia(id))),
-    );
-    box.append(d);
-  }
-  if (data.source_ids?.length)
-    data.source_ids.forEach((id, i) =>
-      box.append(linkButton(`参考资料 ${i + 1}`, () => viewSource(id))),
-    );
   if (data.warnings?.length)
     box.append(element("p", data.warnings.join("；"), "warning"));
   $("messages").append(box);
+  $("messages").hidden = false;
   $("messages").scrollTop = $("messages").scrollHeight;
 }
 async function refreshMessages(taskId = null) {
@@ -161,11 +303,6 @@ async function refreshMessages(taskId = null) {
     `/api/messages/${conversation}${taskId ? `?task_id=${taskId}` : ""}`,
   );
   $("messages").replaceChildren();
-  if (!rows.length)
-    message(
-      "assistant",
-      "可以问“这个是什么”，也可以说“我们一起做……”。任务开始前，我会先找资料，与你确认操作表。",
-    );
   rows.forEach((m) =>
     message(m.role, m.text, m.data ? JSON.parse(m.data) : {}),
   );
@@ -275,10 +412,7 @@ async function uploadBlob(
   form.append("seq", sequence);
   form.append("kind", kind);
   if (taskId) form.append("task_id", taskId);
-  form.append(
-    "origin",
-    kind === "frame" && blob === pickedImage ? "upload" : "camera",
-  );
+  form.append("origin", "camera");
   return json("/api/media", { method: "POST", body: form });
 }
 async function snapshot() {
@@ -293,7 +427,13 @@ async function snapshot() {
   return new Promise((resolve) => c.toBlob(resolve, "image/jpeg", 0.85));
 }
 async function tickCapture() {
-  if (uploading || !stream || pickedImage || current?.status !== "active")
+  if (
+    mode !== "task" ||
+    uploading ||
+    !stream ||
+    pickedImage ||
+    current?.status !== "active"
+  )
     return;
   uploading = true;
   const taskId = current.id;
@@ -318,7 +458,6 @@ async function startCamera() {
   });
   pickedImage = null;
   $("uploaded-preview").hidden = true;
-  $("clear-image").hidden = true;
   $("camera").srcObject = stream;
   $("camera-placeholder").hidden = true;
   $("camera-toggle").textContent = "关闭相机";
@@ -332,131 +471,112 @@ async function startCamera() {
 }
 async function stopCamera() {
   clearInterval(captureTimer);
-  captureGeneration++;
-  stopClip();
   if (stream) stream.getTracks().forEach((t) => t.stop());
   stream = null;
   $("camera").srcObject = null;
   $("camera-toggle").textContent = "开启相机";
   $("camera-placeholder").hidden = !!pickedImage;
   $("capture-status").textContent = "相机未开启";
-}
-function stopClip() {
-  clearTimeout(clipTimer);
-  if (clipRecorder && clipRecorder.state !== "inactive") clipRecorder.stop();
-  clipRecorder = null;
-  recordingTask = null;
-}
-function startClip() {
-  if (
-    !stream ||
-    current?.status !== "active" ||
-    !$("record-clips").checked ||
-    !window.MediaRecorder
-  )
-    return;
-  const taskId = current.id,
-    generation = captureGeneration,
-    start = Date.now() / 1000,
-    chunks = [];
-  const mime = ["video/webm;codecs=vp8", "video/webm", "video/mp4"].find((x) =>
-    MediaRecorder.isTypeSupported(x),
-  );
-  if (!mime) {
-    toast("浏览器不支持录像；仍会正常保存抽帧");
-    return;
-  }
-  const rec = new MediaRecorder(stream, {
-    mimeType: mime,
-    videoBitsPerSecond: 700000,
-  });
-  clipRecorder = rec;
-  recordingTask = taskId;
-  rec.ondataavailable = (e) => {
-    if (e.data.size) chunks.push(e.data);
-  };
-  rec.onstop = async () => {
-    if (chunks.length) {
-      try {
-        await enqueue(new Blob(chunks, { type: mime }), taskId, "clip", start);
-      } catch (e) {
-        toast(errorText(e));
-      }
-    }
-    if (
-      generation === captureGeneration &&
-      current?.id === taskId &&
-      current?.status === "active" &&
-      stream &&
-      $("record-clips").checked
-    ) {
-      clipRecorder = null;
-      startClip();
-    }
-  };
-  rec.start();
-  clipTimer = setTimeout(() => {
-    if (rec.state !== "inactive") rec.stop();
-  }, 10000);
+  renderScreen();
 }
 function syncCapture() {
-  $("capture-status").textContent = stream
-    ? current?.status === "active"
-      ? "● 正在记录任务"
-      : "相机就绪 · 按需取图"
-    : "相机未开启";
-  if (!stream || current?.status !== "active" || !$("record-clips").checked) {
-    if (clipRecorder) {
-      captureGeneration++;
-      stopClip();
-    }
-  } else if (!clipRecorder) startClip();
+  $("capture-status").textContent = pickedImage
+    ? "已拍照"
+    : stream
+      ? mode === "task" && current?.status === "active"
+        ? "● 正在记录"
+        : "相机就绪"
+      : "相机未开启";
+  renderScreen();
 }
 
 async function submitQuestion(e) {
   e?.preventDefault();
-  if (busy) return;
+  if (
+    busy ||
+    voiceBusy ||
+    cameraPending ||
+    mode === "home" ||
+    (mode === "task" && current?.state.preparing)
+  )
+    return;
   const text = $("question").value.trim();
   if (!text) return;
-  setBusy(true);
-  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  if (mode === "instant" && !pickedImage) {
+    toast("请先拍照，再提问");
+    return;
+  }
+  setBusy(
+    true,
+    mode === "task" && !current ? "正在理解目标并准备方案…" : "正在思考…",
+  );
   message("user", text);
   try {
-    const blob = await snapshot();
-    let frame = null;
-    if (blob)
-      frame = await uploadBlob(
-        blob,
-        current?.status === "active" ? current.id : null,
-      );
-    const result = await json("/api/chat", {
-      method: "POST",
-      body: {
-        request_id: crypto.randomUUID(),
-        conversation_id: conversation,
-        text,
-        mode: $("mode").value,
-        task_id: current?.id || null,
-        frame_id: frame?.id || null,
-      },
-    });
-    message("assistant", result.reply, result);
+    if (mode === "task" && current && !current.state.plan_confirmed) {
+      if (text.length > 2000) throw new Error("调整说明请控制在 2000 字以内");
+      await json(`/api/tasks/${current.id}/change`, {
+        method: "POST",
+        body: { version: current.version, action: "note", value: text },
+      });
+      await json(`/api/tasks/${current.id}/prepare`, {
+        method: "POST",
+        body: { reason: text },
+      });
+      message("assistant", "方案已更新，请重新核对后开始。");
+    } else {
+      const blob =
+        mode === "instant"
+          ? pickedImage
+          : current?.status === "active"
+            ? await snapshot()
+            : null;
+      let frame = null;
+      if (blob)
+        frame = await uploadBlob(
+          blob,
+          mode === "task" ? current.id : null,
+          "frame",
+          crypto.randomUUID(),
+          mode === "instant" ? photoCaptured : Date.now() / 1000,
+        );
+      const result = await json("/api/chat", {
+        method: "POST",
+        body: {
+          request_id: crypto.randomUUID(),
+          conversation_id: conversation,
+          text:
+            mode === "task" && !current
+              ? `请带我一起完成这个任务：${text}`
+              : text,
+          mode,
+          task_id: mode === "task" ? current?.id || null : null,
+          frame_id: frame?.id || null,
+        },
+      });
+      message("assistant", result.reply, result);
+    }
     $("question").value = "";
-    speak(result.reply);
-    await refresh();
   } catch (e) {
     message("error", errorText(e));
   } finally {
+    await refresh();
     setBusy(false);
   }
 }
 async function mutate(action, target = "", value = "") {
   if (!current) throw new Error("没有当前任务");
-  current = await json(`/api/tasks/${current.id}/change`, {
-    method: "POST",
-    body: { version: current.version, action, target, value },
-  });
-  await refresh();
+  if (busy) return;
+  setBusy(true, "正在保存…");
+  try {
+    current = await json(`/api/tasks/${current.id}/change`, {
+      method: "POST",
+      body: { version: current.version, action, target, value },
+    });
+    if (current.status !== "active") await stopCamera();
+  } finally {
+    await refresh();
+    setBusy(false);
+  }
 }
 function renderTask(task) {
   const key = JSON.stringify(task);
@@ -464,100 +584,130 @@ function renderTask(task) {
   lastTaskRender = key;
   const content = $("task-content");
   content.replaceChildren();
-  $("task-controls").hidden = !task;
-  $("start-form").hidden = !!task;
+  if (!task) return;
+  const confirmed = task.state.plan_confirmed;
   const names = {
-    draft: "等待确认",
+    draft: "待确认",
     active: "进行中",
     paused: "已暂停",
     ended: "已结束",
   };
-  $("task-status").textContent = task
-    ? `${names[task.status]} · v${task.state.plan_revision || 0}`
-    : "没有进行中的任务";
-  if (!task) return;
+  $("task-status").textContent = names[task.status];
+  $("task-heading").textContent = confirmed ? "当前步骤" : "确认方案";
   content.append(element("h3", task.goal));
   if (task.state.preparing)
-    content.append(element("p", "正在检索资料并生成操作表，请稍候…", "muted"));
+    content.append(element("p", "正在查找资料并准备方案…", "muted"));
   if (task.state.error)
     content.append(element("p", task.state.error, "warning"));
-  if (task.state.notes?.length) {
-    const d = element("details");
-    d.append(element("summary", "用户说明（不是独立验证结果）"));
-    task.state.notes.forEach((n) => d.append(element("p", n.text)));
-    content.append(d);
-  }
   const plan = task.plan;
   if (plan) {
-    content.append(element("p", `适用准备：${plan.prerequisites.join("；")}`));
+    const overview = element(
+      confirmed ? "details" : "div",
+      undefined,
+      "plan-overview",
+    );
+    if (confirmed) overview.append(element("summary", "查看完整计划与来源"));
+    if (plan.prerequisites.length)
+      overview.append(
+        element("p", `需要准备：${plan.prerequisites.join("；")}`),
+      );
     if (plan.questions.length)
-      content.append(
-        element("p", `开始前请核对：${plan.questions.join("；")}`, "warning"),
+      overview.append(
+        element("p", `开始前核对：${plan.questions.join("；")}`, "warning"),
       );
     if (plan.cautions.length)
-      content.append(
-        element("p", `注意：${plan.cautions.join("；")}`, "warning"),
-      );
-    const steps = element("div", undefined, "steps");
-    for (const s of plan.steps) {
-      const card = element("div", undefined, "step");
-      card.append(
-        element("h4", `${s.id} · ${s.title}`),
+      overview.append(element("p", plan.cautions.join("；"), "warning"));
+    const list = element("ol");
+    plan.steps.forEach((s) => {
+      const item = element("li");
+      const d = element("details");
+      const done = task.state.steps[s.id] === "user_reported_done";
+      d.append(
+        element("summary", `${s.title}${done ? " · 已完成" : ""}`),
         element("p", s.instruction),
       );
-      const ul = element("ul");
-      s.checks.forEach((c) => ul.append(element("li", c)));
-      card.append(ul);
-      const select = element("select");
-      [
-        ["unknown", "未确认"],
-        ["doing", "正在做"],
-        ["user_reported_done", "我已做完（用户自报）"],
-        ["needs_recheck", "需要重查 / 返工"],
-      ].forEach(([v, t]) => {
-        const o = element("option", t);
-        o.value = v;
-        select.append(o);
-      });
-      select.value = task.state.steps[s.id] || "unknown";
-      select.onchange = () =>
-        mutate("step", s.id, select.value).catch((e) => toast(errorText(e)));
-      card.append(select);
       s.source_ids.forEach((id) =>
-        card.append(linkButton("步骤来源", () => viewSource(id))),
+        d.append(linkButton("查看来源", () => viewSource(id))),
       );
-      steps.append(card);
-    }
-    content.append(steps);
-  }
-  if (task.state.open_issues?.length) {
-    const issues = element("details");
-    issues.append(element("summary", "待确认问题（AI 提出，不等于已证实）"));
-    task.state.open_issues.forEach((issue) => {
-      const row = element("div");
-      row.append(element("p", issue.text));
-      row.append(
-        linkButton(issue.status === "open" ? "我已确认解决" : "重新打开", () =>
-          mutate(
-            "issue",
-            issue.id,
-            issue.status === "open" ? "resolved_by_user" : "open",
+      if (confirmed && done)
+        d.append(
+          linkButton("重新检查这一步", () =>
+            mutate("step", s.id, "needs_recheck"),
           ),
+        );
+      item.append(d);
+      list.append(item);
+    });
+    overview.append(list);
+    const sources = element("details");
+    sources.append(element("summary", "参考资料"));
+    task.sources.forEach((s) =>
+      sources.append(linkButton(s.title, () => viewSource(s.id))),
+    );
+    overview.append(sources);
+    if (confirmed) {
+      const index = plan.steps.findIndex(
+        (s) => task.state.steps[s.id] !== "user_reported_done",
+      );
+      if (index >= 0) {
+        const step = plan.steps[index];
+        const card = element("div", undefined, "current-step");
+        card.append(
+          element("small", `第 ${index + 1} / ${plan.steps.length} 步`),
+          element("h3", step.title),
+          element("p", step.instruction),
+        );
+        if (step.checks.length) {
+          card.append(element("strong", "继续前，检查一下"));
+          const ul = element("ul");
+          step.checks.forEach((c) => ul.append(element("li", c)));
+          card.append(ul);
+        }
+        if (task.status === "active")
+          card.append(
+            linkButton(
+              index === plan.steps.length - 1
+                ? "已检查，完成这一步"
+                : "已检查，下一步",
+              async () => {
+                if (
+                  confirm(
+                    "确认已完成这一步并核对检查项？这会记录为你的确认，不代表 AI 已验证。",
+                  )
+                )
+                  await mutate("step", step.id, "user_reported_done");
+              },
+            ),
+          );
+        else
+          card.append(element("p", "任务已暂停，继续后再推进步骤。", "muted"));
+        content.append(card);
+      } else {
+        content.append(element("p", "所有步骤都已由你确认完成。"));
+        content.append(linkButton("完成任务", finishTask));
+      }
+    }
+    content.append(overview);
+  }
+  const issues =
+    task.state.open_issues?.filter((i) => i.status === "open") || [];
+  if (issues.length) {
+    const d = element("details");
+    d.append(element("summary", `还有 ${issues.length} 项待确认`));
+    issues.forEach((issue) => {
+      d.append(
+        element("p", issue.text),
+        linkButton("我已确认解决", () =>
+          mutate("issue", issue.id, "resolved_by_user"),
         ),
       );
-      issues.append(row);
     });
-    content.append(issues);
+    content.append(d);
   }
-  const sources = element("div", undefined, "sources");
-  task.sources.forEach((s) =>
-    sources.append(linkButton(s.title, () => viewSource(s.id))),
-  );
-  content.append(sources);
   const transitions = {
     proposed: [
-      ["accepted", "接受建议"],
-      ["rejected", "拒绝"],
+      ["accepted", "采用建议"],
+      ["rejected", "不采用"],
     ],
     accepted: [
       ["executed", "我已执行"],
@@ -568,38 +718,59 @@ function renderTask(task) {
       ["observed_failure", "结果不符合"],
       ["needs_recheck", "尚不确定"],
     ],
-    observed_success: [["needs_recheck", "重新检查"]],
-    observed_failure: [["needs_recheck", "重新检查"]],
     needs_recheck: [
       ["observed_success", "结果符合预期"],
       ["observed_failure", "结果不符合"],
     ],
   };
-  task.suggestions.forEach((s) => {
-    const card = element("div", undefined, "suggestion");
-    card.append(
-      element("p", s.text),
-      element(
-        "small",
-        `建议状态：${s.status} · 接受不等于已执行，结果由用户确认`,
-      ),
-    );
-    (transitions[s.status] || []).forEach(([value, label]) =>
-      card.append(linkButton(label, () => mutate("suggestion", s.id, value))),
-    );
-    content.append(card);
-  });
-  $("confirm-plan").hidden = !(plan && !task.state.plan_confirmed);
+  const suggestions = task.suggestions.filter((s) => transitions[s.status]);
+  if (suggestions.length) {
+    const d = element("details");
+    d.append(element("summary", `建议跟进（${suggestions.length}）`));
+    suggestions.forEach((s) => {
+      const card = element("div", undefined, "suggestion");
+      card.append(element("p", s.text));
+      transitions[s.status].forEach(([value, label]) =>
+        card.append(linkButton(label, () => mutate("suggestion", s.id, value))),
+      );
+      d.append(card);
+    });
+    content.append(d);
+  }
+  $("confirm-plan").hidden = !plan || confirmed || task.state.preparing;
+  $("record-consent").hidden = !plan || confirmed;
+  $("resume-task").hidden = task.status !== "paused" || !confirmed;
+  $("retry-plan").hidden = !!plan || task.state.preparing;
   $("pause-task").hidden = task.status !== "active";
-  $("resume-task").hidden = !(
-    task.status === "paused" && task.state.plan_confirmed
-  );
   $("finish-task").hidden = task.status === "ended";
 }
+async function finishTask() {
+  if (confirm("结束本次任务并停止记录？")) {
+    await mutate("finish");
+    await stopCamera();
+    $("messages").replaceChildren();
+    $("question").value = "";
+    conversation = sessionStorage["along-task-conversation"] =
+      crypto.randomUUID();
+    renderScreen();
+    toast("本次任务已结束");
+  }
+}
 async function refresh() {
+  const request = ++refreshNumber;
   try {
-    state = await json("/api/state");
+    const next = await json("/api/state");
+    if (request !== refreshNumber) return;
+    state = next;
+    const previous = current;
     current = state.task;
+    if (
+      mode === "task" &&
+      previous?.status === "active" &&
+      current?.status !== "active"
+    )
+      await stopCamera();
+    ready = true;
     renderTask(current);
     syncCapture();
     $("connection").textContent = state.busy ? "正在处理" : "已连接";
@@ -616,12 +787,15 @@ async function refresh() {
       : current?.id || "";
     await showQueue();
   } catch (e) {
+    if (request !== refreshNumber) return;
     $("connection").textContent = "连接中断 · 记录暂存本机";
     queueError = errorText(e);
+    updateControls();
   }
 }
 async function prepareTask() {
   if (!current) throw new Error("没有当前任务");
+  if (busy) return;
   setBusy(true, "正在搜索、读取来源并准备操作表…");
   try {
     await json(`/api/tasks/${current.id}/prepare`, {
@@ -632,8 +806,8 @@ async function prepareTask() {
       },
     });
   } finally {
-    setBusy(false);
     await refresh();
+    setBusy(false);
   }
 }
 async function timeline() {
@@ -699,27 +873,40 @@ async function timeline() {
   root.append(linkButton("查看该任务对话", () => refreshMessages(id)));
 }
 
-bind("camera-toggle", "click", () => (stream ? stopCamera() : startCamera()));
-bind("image-input", "change", async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-  if (f.size > 12 * 1024 * 1024) throw new Error("图片不得超过 12 MB");
-  await stopCamera();
-  pickedImage = f;
-  const url = URL.createObjectURL(f);
-  $("uploaded-preview").src = url;
-  $("uploaded-preview").hidden = false;
-  $("camera-placeholder").hidden = true;
-  $("clear-image").hidden = false;
+bind("enter-instant", "click", () => enterMode("instant"));
+bind("enter-task", "click", () => enterMode("task"));
+bind("back-home", "click", goHome);
+bind("camera-toggle", "click", openCamera);
+bind("take-photo", "click", async () => {
+  if (busy || voiceBusy || cameraPending || mode !== "instant") return;
+  setBusy(true, "正在拍照…");
+  try {
+    const blob = await snapshot();
+    if (!blob) {
+      toast("相机画面尚未就绪，请稍后拍照");
+      return;
+    }
+    photoCaptured = Date.now() / 1000;
+    pickedImage = blob;
+    photoURL = URL.createObjectURL(blob);
+    $("uploaded-preview").src = photoURL;
+    $("uploaded-preview").hidden = false;
+    await stopCamera();
+    syncCapture();
+  } finally {
+    setBusy(false);
+    $("question").focus();
+  }
 });
-bind("clear-image", "click", () => {
-  pickedImage = null;
-  $("image-input").value = "";
-  $("uploaded-preview").hidden = true;
-  $("clear-image").hidden = true;
+bind("retake-photo", "click", async () => {
+  clearPhoto();
+  conversation = sessionStorage["along-instant-conversation"] =
+    crypto.randomUUID();
+  $("messages").replaceChildren();
+  $("question").value = "";
   $("camera-placeholder").hidden = false;
+  await openCamera();
 });
-bind("record-clips", "change", syncCapture);
 bind("chat-form", "submit", submitQuestion);
 bind("question", "keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
@@ -727,34 +914,32 @@ bind("question", "keydown", (e) => {
     return submitQuestion();
   }
 });
-bind("stop-speech", "click", () => window.speechSynthesis?.cancel());
-bind("start-form", "submit", async (e) => {
-  e.preventDefault();
-  if (busy) return;
-  current = await json("/api/tasks", {
-    method: "POST",
-    body: { goal: $("goal").value },
-  });
-  await refresh();
-  await prepareTask();
-});
-bind("confirm-plan", "click", async () => {
+async function beginTask(action) {
   if (
-    !confirm("确认资料适用于你的任务、已核对待确认条件，并同意开始持续记录？")
+    !confirm(
+      action === "confirm_plan"
+        ? "已核对准备条件，同意开始任务并持续记录画面？"
+        : "继续任务并恢复画面记录？",
+    )
   )
     return;
-  await mutate("confirm_plan", "", "已核对适用条件");
-});
+  await openCamera();
+  if (!stream) {
+    toast("请先开启相机，再开始任务");
+    return;
+  }
+  try {
+    await mutate(action, "", action === "confirm_plan" ? "已核对适用条件" : "");
+  } catch (e) {
+    await stopCamera();
+    throw e;
+  }
+}
+bind("confirm-plan", "click", () => beginTask("confirm_plan"));
+bind("resume-task", "click", () => beginTask("resume"));
 bind("pause-task", "click", () => mutate("pause"));
-bind("resume-task", "click", () => mutate("resume"));
-bind("finish-task", "click", async () => {
-  if (confirm("结束本次任务并停止持续记录？")) await mutate("finish");
-});
-bind("note-form", "submit", async (e) => {
-  e.preventDefault();
-  await mutate("note", "", $("note").value);
-  $("note").value = "";
-});
+bind("finish-task", "click", finishTask);
+bind("retry-plan", "click", prepareTask);
 bind("prepare-form", "submit", async (e) => {
   e.preventDefault();
   await prepareTask();
@@ -800,58 +985,75 @@ bind("mic", "click", async () => {
     voiceRecorder.stop();
     return;
   }
-  if (busy) return;
-  window.speechSynthesis?.cancel();
-  voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const chunks = [];
-  voiceRecorder = new MediaRecorder(voiceStream);
-  $("mic").textContent = "停止录音";
-  voiceRecorder.ondataavailable = (e) => {
-    if (e.data.size) chunks.push(e.data);
-  };
-  voiceRecorder.onstop = async () => {
-    clearTimeout(voiceTimer);
-    voiceStream.getTracks().forEach((t) => t.stop());
-    $("mic").textContent = "正在识别…";
-    $("mic").disabled = true;
-    try {
-      const form = new FormData();
-      form.append(
-        "file",
-        new Blob(chunks, { type: voiceRecorder.mimeType }),
-        "voice.webm",
-      );
-      const result = await json("/api/speech", { method: "POST", body: form });
-      $("question").value = result.text;
-      toast("语音已识别，请确认后发送");
-    } catch (e) {
-      toast(errorText(e));
-    } finally {
-      $("mic").textContent = "按下说话";
-      $("mic").disabled = false;
-    }
-  };
-  voiceRecorder.start();
-  voiceTimer = setTimeout(() => {
-    if (voiceRecorder.state === "recording") voiceRecorder.stop();
-  }, 60000);
+  if (busy || voiceBusy || cameraPending) return;
+  voiceBusy = true;
+  updateControls();
+  try {
+    voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const chunks = [];
+    voiceRecorder = new MediaRecorder(voiceStream);
+    $("mic").textContent = "停止录音";
+    voiceRecorder.ondataavailable = (e) => {
+      if (e.data.size) chunks.push(e.data);
+    };
+    voiceRecorder.onstop = async () => {
+      clearTimeout(voiceTimer);
+      voiceStream.getTracks().forEach((t) => t.stop());
+      $("mic").textContent = "正在识别…";
+      $("mic").disabled = true;
+      try {
+        const form = new FormData();
+        form.append(
+          "file",
+          new Blob(chunks, { type: voiceRecorder.mimeType }),
+          "voice.webm",
+        );
+        const result = await json("/api/speech", {
+          method: "POST",
+          body: form,
+        });
+        $("question").value = result.text;
+        toast("语音已识别，请确认后发送");
+      } catch (e) {
+        toast(errorText(e));
+      } finally {
+        voiceBusy = false;
+        $("mic").textContent = "语音提问";
+        updateControls();
+      }
+    };
+    voiceRecorder.start();
+    updateControls();
+    voiceTimer = setTimeout(() => {
+      if (voiceRecorder.state === "recording") voiceRecorder.stop();
+    }, 60000);
+  } catch (e) {
+    voiceStream?.getTracks().forEach((t) => t.stop());
+    voiceBusy = false;
+    $("mic").textContent = "语音提问";
+    updateControls();
+    throw e;
+  }
 });
 window.addEventListener("beforeunload", () => {
   if (stream) stream.getTracks().forEach((t) => t.stop());
   if (voiceStream) voiceStream.getTracks().forEach((t) => t.stop());
 });
 window.addEventListener("online", () => flushQueue());
-(async () => {
+async function initialize() {
   try {
     config = await (await fetch("/bootstrap")).json();
     token = config.token;
     queueDB = await openQueue();
     await refresh();
-    await refreshMessages(current?.id || null);
     await flushQueue();
-    setInterval(refresh, 3000);
+    setInterval(() => {
+      if (!busy) refresh();
+    }, 3000);
     setInterval(flushQueue, 5000);
   } catch (e) {
-    toast(errorText(e));
+    toast(`连接失败，正在重试：${errorText(e)}`);
+    setTimeout(initialize, 3000);
   }
-})();
+}
+initialize();

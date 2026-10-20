@@ -43,15 +43,6 @@ main {
   margin: auto;
   padding: 0 32px 32px;
 }
-.notice {
-  background: #e8ecdc;
-  border: 1px solid #d8e0c8;
-  border-radius: 12px;
-  padding: 12px 18px;
-  margin-bottom: 20px;
-  font-size: 13px;
-  color: #526246;
-}
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
@@ -158,13 +149,6 @@ button:disabled {
 .danger {
   color: #944f3e;
 }
-.check {
-  font-size: 12px;
-  color: #66725e;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
 .muted {
   color: #76806f;
   font-size: 13px;
@@ -242,17 +226,6 @@ textarea {
 #send {
   margin-left: auto;
 }
-.inline {
-  display: flex;
-  gap: 10px;
-  margin: 12px 0;
-}
-.inline input {
-  flex: 1;
-}
-.inline button {
-  white-space: nowrap;
-}
 .stack {
   display: grid;
   gap: 8px;
@@ -266,37 +239,6 @@ summary {
   color: #536949;
   font-size: 13px;
 }
-.steps {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 12px;
-  margin: 16px 0;
-}
-.step {
-  border: 1px solid #e0e5d8;
-  border-radius: 11px;
-  padding: 15px;
-}
-.step h4 {
-  margin: 0 0 8px;
-}
-.step p,
-.step li {
-  font-size: 13px;
-}
-.step ul {
-  padding-left: 18px;
-  color: #607354;
-}
-.step select {
-  width: 100%;
-  margin-top: 10px;
-}
-.sources {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
 .suggestion {
   padding: 13px;
   background: #f3eee1;
@@ -306,18 +248,6 @@ summary {
 .timeline-event {
   border-bottom: 1px solid #e2e5d9;
   padding: 14px 0;
-}
-.thumbs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.thumbs img {
-  width: 100px;
-  height: 75px;
-  object-fit: cover;
-  border-radius: 6px;
-  cursor: pointer;
 }
 .warning {
   color: #96643a;
@@ -381,16 +311,150 @@ footer {
   .panel {
     padding: 16px;
   }
-  .inline {
-    flex-wrap: wrap;
-  }
-  .inline input {
-    min-width: 65%;
-  }
   #messages {
     height: 350px;
   }
   .viewfinder {
     aspect-ratio: 16/10;
+  }
+}
+.home {
+  max-width: 820px;
+  margin: 10vh auto 18vh;
+  text-align: center;
+}
+h1 {
+  font-size: clamp(26px, 4vw, 36px);
+  margin-bottom: 8px;
+}
+.mode-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 40px;
+}
+.mode-card {
+  min-height: 190px;
+  padding: 32px;
+  border-radius: 20px;
+  text-align: left;
+  background: #fffef9;
+}
+.mode-card strong {
+  display: block;
+  font-size: 24px;
+  margin-bottom: 12px;
+}
+.mode-card span {
+  color: #76806f;
+  font-size: 15px;
+}
+.mode-card:hover {
+  border-color: #789251;
+  transform: translateY(-2px);
+}
+#session nav {
+  margin: 16px 0 24px;
+}
+#mode-title {
+  font-weight: 600;
+  margin-right: auto;
+}
+.workspace {
+  align-items: start;
+}
+.workspace.single-column {
+  display: block;
+  max-width: 760px;
+  margin: 40px auto;
+}
+.interaction {
+  min-width: 0;
+}
+.camera-panel {
+  position: sticky;
+  top: 20px;
+}
+.camera-actions {
+  justify-content: center;
+}
+.camera-actions button {
+  min-width: 120px;
+}
+.chat-panel h2 {
+  margin-bottom: 10px;
+}
+#messages {
+  flex: initial;
+  min-height: 0;
+  height: auto;
+  max-height: 340px;
+  margin: 10px 0;
+}
+.current-step {
+  border-radius: 12px;
+  background: #f0f3e7;
+  padding: 20px;
+  margin: 16px 0;
+}
+.current-step h3 {
+  margin-top: 5px;
+}
+.current-step ul {
+  padding-left: 20px;
+}
+.current-step button {
+  background: #3d5542;
+  color: white;
+  margin-top: 10px;
+}
+.plan-overview ol {
+  padding-left: 22px;
+}
+.plan-overview li {
+  padding: 3px 0;
+}
+.plan-overview button {
+  margin: 5px;
+}
+.secondary {
+  border-top: 1px solid #d6ddcd;
+  padding: 12px 0;
+  margin-top: 4px;
+}
+#task-more > summary {
+  width: fit-content;
+}
+#task-more input,
+#task-more select {
+  max-width: 100%;
+}
+#privacy-note {
+  text-align: center;
+}
+@media (max-width: 850px) {
+  .camera-panel {
+    position: static;
+  }
+  .mode-choices {
+    gap: 14px;
+  }
+  .mode-card {
+    min-height: 155px;
+    padding: 22px;
+  }
+  .mode-card strong {
+    font-size: 20px;
+  }
+}
+@media (max-width: 480px) {
+  .mode-choices {
+    grid-template-columns: 1fr;
+  }
+  .home {
+    margin: 6vh auto;
+  }
+  .mode-card {
+    min-height: 130px;
   }
 }
