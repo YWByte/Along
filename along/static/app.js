@@ -469,7 +469,7 @@ async function startCamera() {
   $("camera-placeholder").hidden = true;
   $("camera-toggle").textContent = "关闭相机";
   clearInterval(captureTimer);
-  captureTimer = setInterval(tickCapture, (config.frame_interval || 2) * 1000);
+  captureTimer = setInterval(tickCapture, (config.frame_interval || 1) * 1000);
   syncCapture();
   stream.getVideoTracks()[0].onended = () => {
     stopCamera();

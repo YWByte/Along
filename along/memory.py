@@ -2,26 +2,19 @@ import asyncio
 import hashlib
 import json
 import logging
-import re
 import time
 from collections import Counter
 
 import numpy as np
 
 from along.config import Settings
+from along.indexing import terms
 from along.media import MediaStore
 from along.providers.vlm import ImageInput, ProviderError, VLMProvider
 from along.schemas import EventDraft, FrameSelection, Rank, SearchQuery
 from along.store import Store, dump
 
 log = logging.getLogger(__name__)
-
-
-def terms(text):
-    lower = text.lower()
-    words = re.findall(r"[a-z0-9_]+|[\u4e00-\u9fff]", lower)
-    chinese = re.findall(r"[\u4e00-\u9fff]+", lower)
-    return words + [run[i : i + 2] for run in chinese for i in range(len(run) - 1)]
 
 
 class Embeddings:
@@ -70,13 +63,27 @@ class Memory:
             if not frames:
                 continue
             first = frames[0]["captured"]
-            window = [f for f in frames if f["captured"] <= first + self.settings.event_window]
+            window = []
+            for frame in frames:
+                if frame["captured"] > first + self.settings.event_window or any(
+                    frame[key] != frames[0][key] for key in ("plan_revision", "step_id", "origin")
+                ):
+                    break
+                window.append(frame)
             if task["status"] == "active" and time.time() - first < self.settings.event_window:
                 continue
             previous = self.store.rows(
                 "SELECT id FROM media WHERE task_id=? AND kind='frame' AND indexed=1 "
-                "AND expired=0 AND captured<? ORDER BY captured DESC LIMIT 2",
-                (task["id"], first),
+                "AND expired=0 AND captured<? AND captured>=? AND plan_revision IS ? AND step_id IS ? "
+                "AND origin=? ORDER BY captured DESC LIMIT 2",
+                (
+                    task["id"],
+                    first,
+                    first - self.settings.event_window,
+                    frames[0]["plan_revision"],
+                    frames[0]["step_id"],
+                    frames[0]["origin"],
+                ),
             )
             ids = [f["id"] for f in previous[::-1]] + [f["id"] for f in window]
             job_id = "evt_" + hashlib.sha256(dump(ids).encode()).hexdigest()[:24]
@@ -96,7 +103,10 @@ class Memory:
                 else ("录像回放，不是实时现场" if row["origin"] == "replay" else "相机采集")
             )
             return ImageInput(
-                frame_id, path, f"{label}；记录时间 Unix {row['captured']:.3f}；顺序 {row['seq']}"
+                frame_id,
+                path,
+                f"{label}；记录时间 Unix {row['captured']:.3f}；顺序 {row['seq']}；"
+                f"界面计划版本 {row['plan_revision']} 步骤 {row['step_id']}（不代表实际动作）",
             )
         except KeyError:
             return None
@@ -104,7 +114,12 @@ class Memory:
     async def process(self, job):
         ids = json.loads(job["frame_ids"])
         # Evenly cover the whole window instead of only keeping its beginning.
-        selected = [ids[i] for i in sorted(set(np.linspace(0, len(ids) - 1, min(len(ids), 8), dtype=int)))]
+        selected = [
+            ids[i]
+            for i in sorted(
+                set(np.linspace(0, len(ids) - 1, min(len(ids), 8, self.settings.max_images), dtype=int))
+            )
+        ]
         images = [image for fid in selected if (image := self.image(fid))]
         if not images:
             raise ProviderError("事件原始图片均不可用，未生成事件摘要")

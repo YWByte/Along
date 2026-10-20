@@ -6,6 +6,8 @@ import time
 import uuid
 from pathlib import Path
 
+from along.indexing import current_step, terms
+
 
 def uid(prefix: str) -> str:
     return prefix + "_" + uuid.uuid4().hex
@@ -26,6 +28,7 @@ class Store:
         self.lock = threading.RLock()
         self.conn = sqlite3.connect(directory / "along.sqlite3", check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self.conn.create_function("along_terms", 1, lambda text: " ".join(terms(text)))
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
@@ -71,13 +74,44 @@ class Store:
         CREATE TABLE IF NOT EXISTS requests(
           id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, status TEXT NOT NULL,
           result TEXT, created REAL NOT NULL);
-        PRAGMA user_version=1;
+
         """)
         columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(media)")}
         if "origin" not in columns:
             self.conn.execute("ALTER TABLE media ADD COLUMN origin TEXT NOT NULL DEFAULT 'camera'")
             self.conn.commit()
-        self.conn.execute("PRAGMA user_version=2")
+        with self.tx() as db:
+            for name, kind in (("plan_revision", "INTEGER"), ("step_id", "TEXT")):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE media ADD COLUMN {name} {kind}")
+            db.execute("CREATE INDEX IF NOT EXISTS checkpoint_time ON checkpoints(task_id,created)")
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS media_step ON media(task_id,plan_revision,step_id,captured)"
+            )
+            if db.execute("PRAGMA user_version").fetchone()[0] < 3:
+                for frame in db.execute(
+                    "SELECT id,task_id,captured FROM media WHERE task_id IS NOT NULL"
+                ).fetchall():
+                    revision, step = self.capture_context(frame["task_id"], frame["captured"])
+                    db.execute(
+                        "UPDATE media SET plan_revision=?,step_id=? WHERE id=?", (revision, step, frame["id"])
+                    )
+        self.conn.executescript("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS event_search USING fts5(event_id UNINDEXED,task_id UNINDEXED,tokens);
+        CREATE TRIGGER IF NOT EXISTS event_search_insert AFTER INSERT ON events BEGIN
+          INSERT INTO event_search(event_id,task_id,tokens) VALUES(new.id,new.task_id,along_terms(new.data));
+        END;
+        CREATE TRIGGER IF NOT EXISTS event_search_delete AFTER DELETE ON events BEGIN
+          DELETE FROM event_search WHERE event_id=old.id;
+        END;
+        CREATE TRIGGER IF NOT EXISTS event_search_update AFTER UPDATE OF data ON events BEGIN
+          DELETE FROM event_search WHERE event_id=old.id;
+          INSERT INTO event_search(event_id,task_id,tokens) VALUES(new.id,new.task_id,along_terms(new.data));
+        END;
+        INSERT INTO event_search(event_id,task_id,tokens)
+          SELECT id,task_id,along_terms(data) FROM events WHERE id NOT IN (SELECT event_id FROM event_search);
+        PRAGMA user_version=3;
+        """)
         with self.tx() as db:
             db.execute("UPDATE jobs SET status='pending' WHERE status='running'")
             db.execute("UPDATE requests SET status='failed' WHERE status='running'")
@@ -88,6 +122,17 @@ class Store:
                 if state.get("preparing"):
                     state.update(preparing=False, error="准备过程被中断，可重新生成计划")
                     db.execute("UPDATE tasks SET state=? WHERE id=?", (dump(state), row["id"]))
+
+    def capture_context(self, task_id, captured):
+        snapshot = self.one(
+            "SELECT state FROM checkpoints WHERE task_id=? AND created<=? ORDER BY created DESC LIMIT 1",
+            (task_id, captured),
+        )
+        if not snapshot:
+            return None, None
+        data = json.loads(snapshot["state"])
+        step = current_step(data["state"], data.get("plan"))
+        return data["state"].get("plan_revision"), step["id"] if step else None
 
     @contextlib.contextmanager
     def tx(self):

@@ -101,12 +101,13 @@ class MediaStore:
                 raise CapacityError("媒体存储额度已满，请删除旧任务；不会静默覆盖证据")
             if shutil.disk_usage(self.store.directory).free < len(raw) + 100 * 1024 * 1024:
                 raise CapacityError("磁盘剩余空间不足，采集已拒绝")
+            revision, step = self.store.capture_context(task_id, captured) if task_id else (None, None)
             try:
                 temporary.write_bytes(raw)
                 os.replace(temporary, target)
                 db.execute(
-                    "INSERT INTO media(id,task_id,conversation_id,kind,path,captured,received,seq,bytes,digest,origin) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO media(id,task_id,conversation_id,kind,path,captured,received,seq,bytes,digest,origin,plan_revision,step_id) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         media_id,
                         task_id,
@@ -119,6 +120,8 @@ class MediaStore:
                         len(raw),
                         digest,
                         origin,
+                        revision,
+                        step,
                     ),
                 )
             except BaseException:

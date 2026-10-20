@@ -66,12 +66,35 @@ class SearchQuery(BaseModel):
     objects: list[str] = Field(default_factory=list, max_length=10)
 
 
+class MemoryCall(BaseModel):
+    tool: Literal["browse", "search", "open", "current"]
+    query: str = Field(default="", max_length=500)
+    event_id: str | None = Field(default=None, max_length=100)
+    start_time: float | None = Field(default=None, allow_inf_nan=False)
+    end_time: float | None = Field(default=None, allow_inf_nan=False)
+    before_time: float | None = Field(default=None, allow_inf_nan=False)
+    step_id: str | None = Field(default=None, max_length=60)
+    plan_revision: int | None = Field(default=None, ge=0)
+    seconds: int = Field(default=8, ge=1, le=120)
+    frames: int = Field(default=8, ge=2, le=12)
+
+    @model_validator(mode="after")
+    def valid_range(self):
+        if self.start_time is not None and self.end_time is not None and self.start_time > self.end_time:
+            raise ValueError("记忆时间范围反向")
+        if self.tool == "search" and not self.query.strip():
+            raise ValueError("搜索记忆需要查询内容")
+        return self
+
+
 class Answer(BaseModel):
+    memory: MemoryCall | None = None
     research: ResearchDecision | None = None
     reply: str = Field(max_length=5000)
     observed: list[str] = Field(default_factory=list, max_length=10)
     hypotheses: list[str] = Field(default_factory=list, max_length=10)
     missing: list[str] = Field(default_factory=list, max_length=10)
+    blocking_missing: list[str] = Field(default_factory=list, max_length=1)
     checks: list[str] = Field(default_factory=list, max_length=10)
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)
     source_ids: list[str] = Field(default_factory=list, max_length=10)

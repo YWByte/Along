@@ -71,6 +71,7 @@ class FakeVLM:
                 reply="请核对图示方向，当前证据不能认证安全。",
                 evidence_ids=["nonexistent"] if self.bad_evidence else [im.id for im in (images or [])],
                 missing=["无法确认内部结构"],
+                blocking_missing=["无法确认内部结构"],
                 checks=["对照原始说明"],
                 suggestion="先查看对应型号说明书",
             )

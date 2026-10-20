@@ -73,7 +73,11 @@ async function setup(t, initial = null, options = {}) {
   };
   await page.route("**/bootstrap", (route) =>
     route.fulfill({
-      json: { token: "test", frame_interval: 0.15, max_storage_mb: 100 },
+      json: {
+        token: "test",
+        frame_interval: options.frameInterval ?? 0.15,
+        max_storage_mb: 100,
+      },
     }),
   );
   await page.route("**/api/**", async (route) => {
@@ -405,4 +409,31 @@ test("待澄清时不展示旧方案或允许开始，回答条件后恢复确�
     await page.locator("#task-content").textContent(),
     /通用知识建议/,
   );
+});
+
+test("任务采集遵守每秒一帧，暂停后停止", async (t) => {
+  const { page, model } = await setup(t, null, { frameInterval: 1 });
+  await page.click("#enter-task");
+  await ask(page, "整理工作台");
+  await page.click("#confirm-plan");
+  await page.waitForFunction(
+    () => document.getElementById("camera").videoWidth > 0,
+  );
+  await page.waitForFunction(() => seq >= 4);
+  const captured = model.media
+    .map((raw) => {
+      const match = raw.match(/name="captured"\r\n\r\n([0-9.]+)/);
+      return match ? Number(match[1]) : null;
+    })
+    .filter((value) => value !== null);
+  assert.ok(captured.length >= 3);
+  for (let i = 1; i < captured.length; i++) {
+    assert.ok(captured[i] - captured[i - 1] >= 0.8);
+    assert.ok(captured[i] - captured[i - 1] <= 1.5);
+  }
+  await page.click("#back-home");
+  await page.waitForFunction(() => !uploading && !queueSending);
+  const uploads = model.media.length;
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert.equal(model.media.length, uploads);
 });

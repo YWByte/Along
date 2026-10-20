@@ -21,10 +21,16 @@ class Settings(BaseSettings):
     port: int = 8766
     request_timeout: float = 90
     event_window: int = Field(default=30, ge=10, le=300)
-    frame_interval: int = Field(default=2, ge=1, le=30)
+    frame_interval: int = Field(default=1, ge=1, le=30)
     max_storage_mb: int = Field(default=4096, ge=100)
     retention_days: int = Field(default=7, ge=1)
     max_images: int = Field(default=12, ge=2, le=24)
+    memory_rounds: int = Field(default=3, ge=1, le=3)
+    memory_results: int = Field(default=5, ge=1, le=10)
+    clip_frames: int = Field(default=8, ge=2, le=12)
+    clip_seconds: int = Field(default=8, ge=2, le=120)
+    memory_candidates: int = Field(default=512, ge=40, le=4096)
+    agent_timeout: float = Field(default=100, ge=10, le=110)
     whisper_model: str = "small"
     semantic_enabled: bool = False
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

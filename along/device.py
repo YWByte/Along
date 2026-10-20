@@ -97,11 +97,12 @@ class CaptureSpool:
             log.info("capture delivered id=%s", entry["id"])
 
 
-async def run(camera: CaptureSource, client: httpx.AsyncClient, spool: CaptureSpool, interval=2):
+async def run(camera: CaptureSource, client: httpx.AsyncClient, spool: CaptureSpool, interval=1):
     active_task = None
     last_contact = 0
     try:
         while True:
+            tick = time.monotonic()
             try:
                 response = await client.get("/api/state")
                 response.raise_for_status()
@@ -118,7 +119,7 @@ async def run(camera: CaptureSource, client: httpx.AsyncClient, spool: CaptureSp
                 await spool.flush(client)
             except httpx.HTTPError:
                 log.warning("upload deferred; local evidence retained")
-            await asyncio.sleep(interval)
+            await asyncio.sleep(max(0, interval - (time.monotonic() - tick)))
     finally:
         camera.close()
 
