@@ -137,6 +137,7 @@ class AnswerAudit(BaseModel):
     action: Literal["keep", "revise"]
     unsupported_claims: list[str] = Field(default_factory=list, max_length=4)
     corrected_reply: str = Field(default="", max_length=1600)
+    corrected_headline: str = Field(default="", max_length=80)
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
@@ -150,6 +151,7 @@ class Answer(BaseModel):
     memory: MemoryCall | None = None
     research: ResearchDecision | None = None
     reply: str = Field(max_length=5000)
+    headline: str = Field(default="", max_length=80)
     observed: list[str] = Field(default_factory=list, max_length=10)
     hypotheses: list[str] = Field(default_factory=list, max_length=10)
     missing: list[str] = Field(default_factory=list, max_length=10)

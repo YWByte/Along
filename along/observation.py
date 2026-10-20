@@ -50,7 +50,7 @@ async def audit_answer(vlm, scenario, focus, answer, images, reviews):
         "只报告可见变化；‘看不清’不得推导为‘做错’，不能因此让用户重做。"
         "检查回答是否仍针对讨论目标，而非误用当前界面步骤。检查是否编造了遮挡或机位问题。"
         "保留有依据的部分，不因不能计数就否定可见变化。不要重复既有问题或增加检查问卷。"
-        "若原回答有上述问题，action=revise，corrected_reply 给出2至3句直接、自然的修正版，"
+        "若原回答有上述问题，action=revise，corrected_reply 给出2至3句直接、自然的修正版，corrected_headline 给出不超过30字的一句话结论，"
         "不加入新动作建议，不把未知写成事实；evidence_ids 只引用本次提供的原图。否则keep。"
         + skill(scenario)["guidance"]
         + "\n"

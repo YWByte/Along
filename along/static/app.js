@@ -29,11 +29,22 @@ let seq = 0,
 let queueDB,
   queueSending = false,
   queueError = "";
+let lastAnswer = null;
+let voiceHold = { pressed: 0, release: false, toggle: false };
 const blobURLs = new Set();
+const SCENES = {
+  installation: "设备安装与使用",
+  exercise: "锻炼与放松",
+};
+const BASIS = {
+  general_knowledge: "通用知识，未经资料核验",
+  references: "依据参考资料",
+  mixed: "部分步骤有资料依据",
+};
 
 function element(tag, text, className) {
   const e = document.createElement(tag);
-  if (text !== undefined) e.textContent = text;
+  if (text !== undefined && text !== null) e.textContent = text;
   if (className) e.className = className;
   return e;
 }
@@ -43,7 +54,7 @@ function toast(message) {
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => {
     $("toast").hidden = true;
-  }, 7000);
+  }, 6000);
 }
 function errorText(e) {
   return e.message || String(e);
@@ -52,6 +63,18 @@ function bind(id, event, handler) {
   $(id).addEventListener(event, (e) =>
     Promise.resolve(handler(e)).catch((err) => toast(errorText(err))),
   );
+}
+function place(node, slotId) {
+  const slot = $(slotId);
+  if (slot && node.parentElement !== slot) slot.append(node);
+}
+function clock(seconds) {
+  return new Date(seconds * 1000).toLocaleTimeString("zh-CN", {
+    hour12: false,
+  });
+}
+function two(n) {
+  return String(n).padStart(2, "0");
 }
 async function api(path, options = {}) {
   const headers = { "X-Along-Token": token, ...options.headers };
@@ -88,99 +111,102 @@ async function api(path, options = {}) {
 async function json(path, options = {}) {
   return (await api(path, options)).json();
 }
-function setBusy(value, message = "正在结合现场与记录分析…") {
+function setBusy(value, message = "正在看刚才的画面…") {
   busy = value;
   if (value) refreshNumber++;
-  updateControls();
   $("activity").textContent = value ? message : "";
+  document.body.classList.toggle("thinking", value);
+  if (!value && $("answer").classList.contains("thinking")) hideAnswer();
+  updateControls();
+}
+function taskStage() {
+  if (!current) return "goal";
+  if (current.state.plan_confirmed) return "run";
+  return "plan";
 }
 function updateControls() {
   const locked = busy || voiceBusy || cameraPending;
   const preparing = mode === "task" && !!current?.state.preparing;
+  const noPhoto = mode === "instant" && !pickedImage;
+  const recording = voiceRecorder?.state === "recording";
   $("back-home").disabled = locked;
   $("enter-task").disabled = !ready || locked;
   $("enter-instant").disabled = !ready || locked;
-  $("question").disabled =
-    busy || preparing || (mode === "instant" && !pickedImage);
-  $("send").disabled =
-    locked || preparing || (mode === "instant" && !pickedImage);
+  $("question").disabled = busy || preparing || noPhoto;
+  $("send").disabled = locked || preparing || noPhoto;
   $("mic").disabled =
-    busy ||
-    preparing ||
-    cameraPending ||
-    (voiceBusy && voiceRecorder?.state !== "recording") ||
-    (mode === "instant" && !pickedImage);
+    busy || preparing || cameraPending || noPhoto || (voiceBusy && !recording);
   $("take-photo").disabled = locked || !stream;
   $("retake-photo").disabled = locked;
   $("camera-toggle").disabled = locked;
-  for (const button of document.querySelectorAll(
-    "#task-panel button, #task-more button, #task-more input, #task-more select",
-  )) {
-    button.disabled = locked || !!current?.state.preparing;
-  }
+  for (const el of document.querySelectorAll(
+    "#task button, #drawer button, #drawer input, #drawer select",
+  ))
+    el.disabled = locked || preparing;
+  if (preparing) $("finish-task").disabled = locked;
+  $("close-menu").disabled = false;
 }
 function renderScreen() {
-  const taskMode = mode === "task";
-  const executing = taskMode && current?.state.plan_confirmed;
+  const stage = taskStage();
+  const running = mode === "task" && stage === "run";
+  const active = running && current?.status === "active";
+  document.body.dataset.mode = mode;
+  document.body.dataset.stage = mode === "task" ? stage : "";
   $("home").hidden = mode !== "home";
-  $("session").hidden = mode === "home";
-  $("mode-title").textContent = taskMode ? "任务模式" : "识别模式";
-  $("stage").textContent = taskMode
-    ? executing
-      ? "一起操作"
-      : current
-        ? current.state.pending_questions?.length
-          ? "补充条件"
-          : "确认方案"
-        : "说目标"
-    : "";
-  $("camera-panel").hidden = !(mode === "instant" || executing);
-  $("workspace").classList.toggle(
-    "single-column",
-    !(mode === "instant" || executing),
-  );
-  $("task-panel").hidden = !taskMode || !current;
-  $("task-more").hidden = !taskMode || !current;
-  $("privacy-note").hidden = mode !== "instant";
-  $("camera-title").textContent = taskMode ? "操作现场" : "拍下你想问的东西";
+  $("instant").hidden = mode !== "instant";
+  $("task").hidden = mode !== "task";
+  $("back-home").hidden = mode === "home";
+  $("mode-title").textContent =
+    mode === "task" ? "一起做" : mode === "instant" ? "看一看" : "";
+  $("stage").textContent =
+    mode !== "task"
+      ? ""
+      : stage === "run"
+        ? "一起操作"
+        : stage === "plan"
+          ? current.state.pending_questions?.length
+            ? "补充条件"
+            : "确认方案"
+          : "说目标";
+  $("open-menu").hidden = mode !== "task" || !current;
+  $("task-goal").hidden = stage !== "goal";
+  $("task-plan").hidden = stage !== "plan";
+  $("task-run").hidden = stage !== "run";
+  $("paused-overlay").hidden = !running || current.status !== "paused";
+  $("chat-form").hidden = mode === "home";
+  if (mode === "instant") {
+    place($("viewfinder"), "instant-view-slot");
+    place($("chat-form"), "instant-composer-slot");
+    place($("messages"), "instant-thread");
+  } else if (mode === "task") {
+    if (running) place($("viewfinder"), "pip-slot");
+    place($("chat-form"), `${stage}-composer-slot`);
+    place($("messages"), running ? "drawer-thread" : `${stage}-thread`);
+  }
   $("take-photo").hidden = mode !== "instant" || !!pickedImage;
   $("retake-photo").hidden = mode !== "instant" || !pickedImage;
-  $("camera-toggle").hidden = !!stream || !!pickedImage;
-  $("camera-hint").textContent = taskMode
-    ? current?.status === "active"
-      ? stream
-        ? "正在记录过程，遇到问题随时问我。"
-        : "相机未开启，当前没有记录画面；请重试开启相机。"
-      : "任务已暂停，不记录画面。"
-    : pickedImage
-      ? "将用这张照片回答；可以继续追问，也可以重拍。"
-      : "先拍照，再输入问题或语音提问。";
-  $("chat-heading").textContent = !taskMode
-    ? "有什么想问的？"
-    : !current
-      ? "我们一起做什么？"
-      : executing
-        ? "遇到问题，随时问我"
-        : "需要调整什么？";
-  $("chat-hint").textContent = !taskMode
-    ? ""
-    : !current
-      ? "告诉我目标，我会与你确认方案，必要时再查资料。"
-      : executing
-        ? "结合当前画面与之前的过程，帮你判断下一步。"
-        : "核对准备条件；有不适用的地方，直接告诉我。";
-  $("question").placeholder = !taskMode
-    ? "针对这张照片提问…"
-    : !current
-      ? "例如：带我做一份曲奇饼干"
-      : executing
-        ? "这一步遇到了什么问题？"
-        : "例如：我没有烤箱，需要调整方案…";
-  if (taskMode && current?.state.pending_questions?.length) {
-    $("chat-heading").textContent = "补充一下情况";
-    $("chat-hint").textContent = "先确认关键条件，再决定是否需要查资料。";
-    $("question").placeholder = "回答上面的待确认问题…";
-  }
+  $("camera-toggle").hidden =
+    !!stream ||
+    !!pickedImage ||
+    cameraPending ||
+    !(mode === "instant" || active);
+  $("capture-status").hidden = !(active && stream);
+  $("instant-title").textContent = pickedImage
+    ? "想问它什么？"
+    : "对准它，按下快门";
+  const pending = current?.state.pending_questions?.length;
+  $("question").placeholder =
+    mode === "instant"
+      ? pickedImage
+        ? "问点什么…"
+        : "先拍一张"
+      : stage === "goal"
+        ? "说说你想完成的事…"
+        : stage === "plan"
+          ? pending
+            ? "回答上面的问题…"
+            : "哪里不合适？直接说，我来改"
+          : "哪里不确定？问我…";
   $("messages").hidden = !$("messages").children.length;
   updateControls();
 }
@@ -197,6 +223,7 @@ async function enterMode(next) {
   mode = next;
   conversation = conversationFor(next);
   clearPhoto();
+  hideAnswer();
   $("question").value = "";
   $("messages").replaceChildren();
   if (next === "instant") {
@@ -204,6 +231,8 @@ async function enterMode(next) {
     conversation = sessionStorage["along-instant-conversation"] =
       crypto.randomUUID();
   }
+  lastTaskRender = "";
+  renderTask(current);
   renderScreen();
   if (next === "instant" || current?.status === "active") await openCamera();
   if (next === "task") {
@@ -217,113 +246,229 @@ async function enterMode(next) {
 }
 async function goHome() {
   if (busy || voiceBusy || cameraPending) return;
+  closeMenu();
   if (mode === "task" && current?.status === "active") {
-    if (!confirm("返回首页会暂停任务并停止记录，是否继续？")) return;
+    // Stop capture before the pause round-trip so no frame lands after leaving.
+    await stopCamera();
     await mutate("pause");
+    toast("任务已暂停，回来点“继续”即可");
   }
   await stopCamera();
   clearPhoto();
+  hideAnswer();
   mode = "home";
-  $("task-more").open = false;
   renderScreen();
 }
 async function openCamera() {
   if (stream || cameraPending) return;
   cameraPending = true;
-  $("camera-placeholder").textContent = "请允许浏览器使用相机…";
+  $("camera-placeholder").textContent = "请允许使用相机…";
   $("camera-placeholder").hidden = false;
-  updateControls();
+  renderScreen();
   try {
     await startCamera();
   } catch (e) {
-    $("camera-placeholder").textContent =
-      "无法打开相机，请检查浏览器权限或设备连接，再点击重试。";
+    $("camera-placeholder").textContent = "相机没有打开，检查权限后重试";
     toast(errorText(e));
   } finally {
     cameraPending = false;
     renderScreen();
   }
 }
-function linkButton(label, callback) {
-  const b = element("button", label);
+function linkButton(label, callback, className) {
+  const b = element("button", label, className);
   b.type = "button";
   b.onclick = () =>
     Promise.resolve(callback()).catch((e) => toast(errorText(e)));
   return b;
 }
-async function viewMedia(id, kind = "frame") {
+async function mediaURL(id) {
   const response = await api(`/api/media/${id}`);
   const url = URL.createObjectURL(await response.blob());
   blobURLs.add(url);
+  return url;
+}
+async function viewMedia(id, kind = "frame") {
+  const url = await mediaURL(id);
   const content = $("evidence-content");
-  content.replaceChildren(element("p", `原始记录：${id}`));
+  content.replaceChildren(element("p", `原始记录 ${id}`, "eyebrow"));
   const el = element(kind === "frame" ? "img" : "video");
   el.src = url;
   if (kind !== "frame") el.controls = true;
   content.append(el);
-  $("evidence-dialog").showModal();
+  if (!$("evidence-dialog").open) $("evidence-dialog").showModal();
 }
 async function viewSource(id) {
   const s = await json(`/api/sources/${id}`);
   $("evidence-content").replaceChildren(
     element("h3", s.title),
-    element("p", s.url),
+    element("p", s.url, "muted"),
     element("pre", s.content),
   );
-  $("evidence-dialog").showModal();
+  if (!$("evidence-dialog").open) $("evidence-dialog").showModal();
+}
+function headlineOf(data, text) {
+  const h = (data.headline || "").trim();
+  if (h) return h;
+  const first = (text || "").split(/(?<=[。！？!?])/)[0].trim();
+  return first.length <= 40 ? first : "";
+}
+function evidenceFrames(data) {
+  const frames = [];
+  for (const t of data.retrieval?.tools || [])
+    for (const f of t.result?.frames || []) frames.push(f);
+  return frames;
+}
+function hasEvidence(data) {
+  return !!(
+    data.evidence_ids?.length ||
+    data.source_ids?.length ||
+    data.retrieval?.visual_reviews?.some((r) => r.result)
+  );
+}
+function evidenceLine(data) {
+  const frames = evidenceFrames(data);
+  const parts = [];
+  if (frames.length) {
+    const times = frames.map((f) => f.captured).sort((a, b) => a - b);
+    parts.push(
+      `回看 ${clock(times[0])}–${clock(times.at(-1))}`,
+      `${new Set(frames.map((f) => f.id)).size} 帧`,
+    );
+  } else if (data.evidence_ids?.length)
+    parts.push(`${data.evidence_ids.length} 张画面`);
+  if (data.source_ids?.length) parts.push(`${data.source_ids.length} 份资料`);
+  return parts.join(" · ");
+}
+async function thumb(id, label) {
+  const b = element("button", undefined, "thumb");
+  b.type = "button";
+  b.setAttribute("aria-label", label);
+  b.onclick = () => viewMedia(id).catch((e) => toast(errorText(e)));
+  const img = element("img");
+  img.alt = label;
+  b.append(img, element("span", label));
+  mediaURL(id)
+    .then((url) => (img.src = url))
+    .catch(() => b.classList.add("missing"));
+  return b;
+}
+async function openEvidence(data) {
+  const root = $("evidence-content");
+  root.replaceChildren(element("p", "这次回答的依据", "eyebrow"));
+  if (data.review_focus?.subject)
+    root.append(element("h3", `本次核对：${data.review_focus.subject}`));
+  for (const review of data.retrieval?.visual_reviews || []) {
+    if (!review.result) continue;
+    root.append(
+      element("p", review.result.summary),
+      element("p", "以上是画面观察，不是动作或安全认证。", "muted"),
+    );
+    for (const change of review.result.changes || []) {
+      const group = element("div", undefined, "change");
+      group.append(element("p", change.claim));
+      const row = element("div", undefined, "thumbs");
+      for (const [i, id] of change.frame_ids.entries())
+        row.append(await thumb(id, `对比帧 ${i + 1}`));
+      group.append(row);
+      root.append(group);
+    }
+  }
+  if (data.evidence_ids?.length) {
+    root.append(element("p", "引用的画面", "eyebrow"));
+    const row = element("div", undefined, "thumbs");
+    for (const [i, id] of data.evidence_ids.entries())
+      row.append(await thumb(id, `过程图片 ${i + 1}`));
+    root.append(row);
+  }
+  data.source_ids?.forEach((id, i) =>
+    root.append(linkButton(`参考资料 ${i + 1}`, () => viewSource(id), "chip")),
+  );
+  if (!$("evidence-dialog").open) $("evidence-dialog").showModal();
 }
 function message(role, text, data = {}) {
   const box = element("article", undefined, role);
-  box.append(element("p", text));
-  if (mode === "task") {
-    for (const [key, label] of [
-      ["missing", "还需确认"],
-      ["checks", "继续前检查"],
-    ]) {
-      if (data[key]?.length) {
-        box.append(element("strong", label));
-        const ul = element("ul");
-        data[key].forEach((t) => ul.append(element("li", t)));
-        box.append(ul);
-      }
-    }
-    if (
-      data.evidence_ids?.length ||
-      data.source_ids?.length ||
-      data.retrieval?.visual_reviews?.length
-    ) {
-      const d = element("details");
-      d.append(element("summary", "查看依据"));
-      if (data.review_focus?.subject)
-        d.append(
-          element("p", `本次核对：${data.review_focus.subject}`, "muted"),
-        );
-      for (const review of data.retrieval?.visual_reviews || []) {
-        if (!review.result) continue;
-        d.append(
-          element("p", `画面观察（不是动作认证）：${review.result.summary}`),
-        );
-        for (const change of review.result.changes || []) {
-          d.append(element("p", change.claim));
-          change.frame_ids.forEach((id, i) =>
-            d.append(linkButton(`对比帧 ${i + 1}`, () => viewMedia(id))),
-          );
-        }
-      }
-      data.evidence_ids?.forEach((id, i) =>
-        d.append(linkButton(`过程图片 ${i + 1}`, () => viewMedia(id))),
+  if (role === "assistant") {
+    const headline = headlineOf(data, text);
+    if (headline) box.append(element("strong", headline, "headline"));
+    if (text && text.trim() !== headline) box.append(element("p", text));
+    if (mode === "task" && data.suggestion)
+      box.append(element("p", `试试：${data.suggestion}`, "try"));
+    if (mode === "task" && hasEvidence(data))
+      box.append(
+        linkButton(
+          `依据 · ${evidenceLine(data) || "查看"}`,
+          () => openEvidence(data),
+          "evidence-link",
+        ),
       );
-      data.source_ids?.forEach((id, i) =>
-        d.append(linkButton(`参考资料 ${i + 1}`, () => viewSource(id))),
-      );
-      box.append(d);
-    }
-  }
+  } else box.append(element("p", text));
   if (data.warnings?.length)
     box.append(element("p", data.warnings.join("；"), "warning"));
   $("messages").append(box);
   $("messages").hidden = false;
   $("messages").scrollTop = $("messages").scrollHeight;
+  const slot = $("messages").parentElement;
+  if (slot) slot.scrollTop = slot.scrollHeight;
+}
+function hideAnswer() {
+  lastAnswer = null;
+  clearTimeout(hideAnswer.timer);
+  $("answer").hidden = true;
+  $("answer").replaceChildren();
+}
+function showThinking(text) {
+  const card = $("answer");
+  card.className = "answer thinking";
+  card.replaceChildren(
+    element("span", undefined, "dots"),
+    element("strong", text, "headline"),
+  );
+  card.hidden = false;
+}
+function showAnswer(data, error = "") {
+  const card = $("answer");
+  clearTimeout(hideAnswer.timer);
+  card.className = error ? "answer error" : "answer";
+  card.replaceChildren();
+  const close = linkButton("✕", hideAnswer, "ghost close");
+  close.setAttribute("aria-label", "收起回答");
+  if (error) {
+    card.append(close, element("strong", error, "headline"));
+    card.hidden = false;
+    return;
+  }
+  lastAnswer = data;
+  const headline = headlineOf(data, data.reply) || data.reply;
+  card.append(close, element("strong", headline, "headline"));
+  const detail = element("div", undefined, "detail");
+  if (data.reply && data.reply.trim() !== headline)
+    detail.append(element("p", data.reply));
+  if (data.suggestion)
+    detail.append(element("p", `试试：${data.suggestion}`, "try"));
+  if (data.checks?.length) {
+    const ul = element("ul", undefined, "checks");
+    data.checks.forEach((c) => ul.append(element("li", c)));
+    detail.append(ul);
+  }
+  if (data.warnings?.length)
+    detail.append(element("p", data.warnings.join("；"), "warning"));
+  if (detail.children.length) card.append(detail);
+  if (hasEvidence(data))
+    card.append(
+      linkButton(
+        `依据 · ${evidenceLine(data) || "查看"}`,
+        () => openEvidence(data),
+        "evidence-link",
+      ),
+    );
+  card.onclick = (e) => {
+    if (e.target === card || e.target.classList.contains("headline"))
+      card.classList.toggle("compact");
+  };
+  card.hidden = false;
+  // Collapse rather than vanish: the user may glance back mid-action.
+  hideAnswer.timer = setTimeout(() => card.classList.add("compact"), 25000);
 }
 async function refreshMessages(taskId = null) {
   const rows = await json(
@@ -333,8 +478,8 @@ async function refreshMessages(taskId = null) {
   rows.forEach((m) =>
     message(m.role, m.text, m.data ? JSON.parse(m.data) : {}),
   );
+  renderScreen();
 }
-
 async function openQueue() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open("along-capture", 1);
@@ -476,9 +621,7 @@ async function tickCapture() {
 }
 async function startCamera() {
   if (!navigator.mediaDevices)
-    throw new Error(
-      "当前浏览器不支持相机，请使用 localhost 上的 Chrome 或 Safari",
-    );
+    throw new Error("当前浏览器不支持相机，请在 localhost 用 Chrome 或 Safari");
   stream = await navigator.mediaDevices.getUserMedia({
     video: { width: { ideal: 1280 }, height: { ideal: 720 } },
     audio: false,
@@ -487,7 +630,6 @@ async function startCamera() {
   $("uploaded-preview").hidden = true;
   $("camera").srcObject = stream;
   $("camera-placeholder").hidden = true;
-  $("camera-toggle").textContent = "关闭相机";
   clearInterval(captureTimer);
   captureTimer = setInterval(tickCapture, (config.frame_interval || 1) * 1000);
   syncCapture();
@@ -501,22 +643,14 @@ async function stopCamera() {
   if (stream) stream.getTracks().forEach((t) => t.stop());
   stream = null;
   $("camera").srcObject = null;
-  $("camera-toggle").textContent = "开启相机";
+  $("camera-placeholder").textContent =
+    mode === "task" && current?.status !== "active" ? "已暂停" : "相机未开启";
   $("camera-placeholder").hidden = !!pickedImage;
-  $("capture-status").textContent = "相机未开启";
   renderScreen();
 }
 function syncCapture() {
-  $("capture-status").textContent = pickedImage
-    ? "已拍照"
-    : stream
-      ? mode === "task" && current?.status === "active"
-        ? "● 正在记录"
-        : "相机就绪"
-      : "相机未开启";
   renderScreen();
 }
-
 async function submitQuestion(e) {
   e?.preventDefault();
   if (
@@ -530,14 +664,22 @@ async function submitQuestion(e) {
   const text = $("question").value.trim();
   if (!text) return;
   if (mode === "instant" && !pickedImage) {
-    toast("请先拍照，再提问");
+    toast("先拍一张，再提问");
     return;
   }
+  const running = mode === "task" && current?.state.plan_confirmed;
   setBusy(
     true,
-    mode === "task" && !current ? "正在理解目标并准备方案…" : "正在思考…",
+    mode === "task" && !current
+      ? "正在理解目标，准备方案…"
+      : mode === "task" && !running
+        ? "正在调整方案…"
+        : running
+          ? `“${text.length > 18 ? text.slice(0, 18) + "…" : text}” 正在看刚才的画面…`
+          : "正在看这张照片…",
   );
   message("user", text);
+  if (running) showThinking($("activity").textContent);
   try {
     if (mode === "task" && current && !current.state.plan_confirmed) {
       if (text.length > 2000) throw new Error("调整说明请控制在 2000 字以内");
@@ -553,7 +695,7 @@ async function submitQuestion(e) {
         "assistant",
         prepared.state.pending_questions?.length
           ? prepared.state.pending_questions.join("；")
-          : "方案已更新，请重新核对后开始。",
+          : "方案改好了，看看是否合适。",
       );
     } else {
       const blob =
@@ -586,10 +728,13 @@ async function submitQuestion(e) {
         },
       });
       message("assistant", result.reply, result);
+      if (running) showAnswer(result);
     }
     $("question").value = "";
+    autosize();
   } catch (e) {
     message("error", errorText(e));
+    if (running) showAnswer({}, errorText(e));
   } finally {
     await refresh();
     setBusy(false);
@@ -610,215 +755,252 @@ async function mutate(action, target = "", value = "") {
     setBusy(false);
   }
 }
-function renderTask(task) {
-  const key = JSON.stringify(task);
-  if (key === lastTaskRender) return;
-  lastTaskRender = key;
-  const content = $("task-content");
-  content.replaceChildren();
-  if (!task) return;
-  const confirmed = task.state.plan_confirmed;
-  const names = {
-    draft: "待确认",
-    active: "进行中",
-    paused: "已暂停",
-    ended: "已结束",
-  };
-  $("task-status").textContent = names[task.status];
-  $("task-heading").textContent = confirmed ? "当前步骤" : "确认方案";
-  content.append(element("h3", task.goal));
-  if (task.state.preparing)
-    content.append(element("p", "正在判断资料需求并准备方案…", "muted"));
-  if (task.state.error)
-    content.append(element("p", task.state.error, "warning"));
-  const questions = task.state.pending_questions || [];
-  if (questions.length) {
-    $("task-heading").textContent = "先补充几个条件";
-    const list = element("ul");
-    questions.forEach((q) => list.append(element("li", q)));
-    content.append(
-      list,
-      element("p", "在下方回答即可，暂不生成操作步骤。", "muted"),
-    );
-  }
+function list(items, className) {
+  const ul = element("ul", undefined, className);
+  items.forEach((t) => ul.append(element("li", t)));
+  return ul;
+}
+function currentIndex(task) {
+  return task.plan.steps.findIndex(
+    (s) => task.state.steps[s.id] !== "user_reported_done",
+  );
+}
+function renderPlanCard(task, questions) {
   const plan = questions.length ? null : task.plan;
-  if (plan) {
+  const scene = SCENES[task.state.scenario];
+  $("plan-title").textContent = task.goal;
+  const body = $("plan-body");
+  body.replaceChildren();
+  if (task.state.preparing) {
+    $("plan-meta").textContent = "准备中";
+    body.append(
+      element("p", "正在判断要不要查资料，然后写方案…", "muted pulse"),
+    );
+  } else if (questions.length) {
+    $("plan-meta").textContent = "开始前，先确认一件事";
+    body.append(list(questions, "questions"));
+    body.append(element("p", "在下面直接回答就好。", "muted"));
+  } else if (plan) {
     const basis =
       plan.basis ||
       (plan.steps.some((s) => s.source_ids.length)
         ? "references"
         : "general_knowledge");
-    const labels = {
-      general_knowledge: "通用知识建议 · 未经外部资料核验",
-      references: "参考资料生成 · 不代表已独立核验",
-      mixed: "部分步骤有资料依据，其余为通用建议",
-    };
-    const sceneNames = {
-      installation: "设备安装与使用",
-      exercise: "日常锻炼与放松",
-    };
-    const sceneName = sceneNames[task.state.scenario];
-    content.append(
+    $("plan-meta").textContent = [
+      scene,
+      `${plan.steps.length} 步`,
+      BASIS[basis],
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    if (plan.prerequisites.length) {
+      body.append(element("p", "准备", "label"));
+      body.append(list(plan.prerequisites, "ticks"));
+    }
+    body.append(element("p", "步骤", "label"));
+    const ol = element("ol", undefined, "plan-steps");
+    plan.steps.forEach((s) => {
+      const li = element("li");
+      li.append(element("strong", s.title), element("p", s.instruction));
+      s.source_ids.forEach((id) =>
+        li.append(linkButton("来源", () => viewSource(id), "chip tiny")),
+      );
+      ol.append(li);
+    });
+    body.append(ol);
+    const notes = [...plan.questions, ...plan.cautions];
+    if (notes.length) {
+      body.append(element("p", "注意", "label"));
+      body.append(list(notes, "notes"));
+    }
+  }
+  if (task.state.error) body.append(element("p", task.state.error, "warning"));
+  $("confirm-plan").hidden = !plan || task.state.preparing;
+  $("record-consent").hidden = !plan || task.state.preparing;
+  $("retry-plan").hidden = !!plan || task.state.preparing || !!questions.length;
+}
+function renderRun(task) {
+  const plan = task.plan;
+  const progress = $("progress");
+  progress.replaceChildren();
+  const index = currentIndex(task);
+  plan.steps.forEach((s, i) => {
+    const li = element("li");
+    li.title = s.title;
+    if (task.state.steps[s.id] === "user_reported_done") li.className = "done";
+    if (i === index) li.className = "now";
+    progress.append(li);
+  });
+  const content = $("task-content");
+  content.replaceChildren();
+  const scene = SCENES[task.state.scenario];
+  if (index < 0) {
+    const done = element("div", undefined, "current-step finished");
+    done.append(
       element(
         "p",
-        [sceneName, labels[basis]].filter(Boolean).join(" · "),
-        "muted",
+        `${two(plan.steps.length)} / ${two(plan.steps.length)}`,
+        "count",
       ),
+      element("h2", "都做完了"),
+      element("p", "所有步骤都由你确认完成。", "instruction"),
     );
-    const overview = element(
-      confirmed ? "details" : "div",
-      undefined,
-      "plan-overview",
+    content.append(done);
+  } else {
+    const step = plan.steps[index];
+    const card = element("div", undefined, "current-step");
+    card.append(
+      element(
+        "p",
+        `${two(index + 1)} / ${two(plan.steps.length)}${scene ? " · " + scene : ""}`,
+        "count",
+      ),
+      element("h2", step.title),
+      element("p", step.instruction, "instruction"),
     );
-    if (confirmed) overview.append(element("summary", "查看完整计划与来源"));
-    if (plan.prerequisites.length)
-      overview.append(
-        element("p", `需要准备：${plan.prerequisites.join("；")}`),
-      );
-    if (plan.questions.length)
-      overview.append(
-        element("p", `开始前核对：${plan.questions.join("；")}`, "warning"),
-      );
-    if (plan.cautions.length)
-      overview.append(element("p", plan.cautions.join("；"), "warning"));
-    const list = element("ol");
-    plan.steps.forEach((s) => {
-      const item = element("li");
-      const d = element("details");
-      const done = task.state.steps[s.id] === "user_reported_done";
-      d.append(
-        element("summary", `${s.title}${done ? " · 已完成" : ""}`),
-        element("p", s.instruction),
-      );
-      s.source_ids.forEach((id) =>
-        d.append(linkButton("查看来源", () => viewSource(id))),
-      );
-      if (confirmed && done)
-        d.append(
-          linkButton("重新检查这一步", () =>
-            mutate("step", s.id, "needs_recheck"),
-          ),
-        );
-      item.append(d);
-      list.append(item);
-    });
-    overview.append(list);
-    const sources = element("details");
-    sources.append(element("summary", "参考资料"));
-    task.sources.forEach((s) =>
-      sources.append(linkButton(s.title, () => viewSource(s.id))),
-    );
-    if (task.sources.length) overview.append(sources);
-    if (confirmed) {
-      const index = plan.steps.findIndex(
-        (s) => task.state.steps[s.id] !== "user_reported_done",
-      );
-      if (index >= 0) {
-        const step = plan.steps[index];
-        const card = element("div", undefined, "current-step");
-        card.append(
-          element("small", `第 ${index + 1} / ${plan.steps.length} 步`),
-          element("h3", step.title),
-          element("p", step.instruction),
-        );
-        if (step.checks.length) {
-          card.append(element("strong", "继续前，检查一下"));
-          const ul = element("ul");
-          step.checks.forEach((c) => ul.append(element("li", c)));
-          card.append(ul);
-        }
-        if (task.status === "active")
-          card.append(
-            linkButton(
-              index === plan.steps.length - 1
-                ? "已检查，完成这一步"
-                : "已检查，下一步",
-              async () => {
-                if (
-                  confirm(
-                    "确认已完成这一步并核对检查项？这会记录为你的确认，不代表 AI 已验证。",
-                  )
-                )
-                  await mutate("step", step.id, "user_reported_done");
-              },
-            ),
-          );
-        else
-          card.append(element("p", "任务已暂停，继续后再推进步骤。", "muted"));
-        content.append(card);
-      } else {
-        content.append(element("p", "所有步骤都已由你确认完成。"));
-        content.append(linkButton("完成任务", finishTask));
-      }
+    if (step.checks.length) {
+      card.append(element("p", "做到这样就可以", "label"));
+      card.append(list(step.checks.slice(0, 3), "ticks"));
     }
-    content.append(overview);
+    content.append(card);
   }
-  const issues =
-    task.state.open_issues?.filter((i) => i.status === "open") || [];
-  if (issues.length) {
-    const d = element("details");
-    d.append(element("summary", `还有 ${issues.length} 项待确认`));
-    issues.forEach((issue) => {
-      d.append(
-        element("p", issue.text),
-        linkButton("我已确认解决", () =>
-          mutate("issue", issue.id, "resolved_by_user"),
+  $("prev-step").hidden = index === 0;
+  $("prev-step").textContent = "← 上一步";
+  $("next-step").textContent =
+    index < 0
+      ? "完成任务"
+      : index === plan.steps.length - 1
+        ? "完成这一步"
+        : "下一步 →";
+}
+function renderOutline(task) {
+  const root = $("plan-outline");
+  root.replaceChildren();
+  const plan = task?.plan;
+  if (!plan) return;
+  const ol = element("ol", undefined, "outline");
+  plan.steps.forEach((s) => {
+    const li = element("li");
+    const done = task.state.steps[s.id] === "user_reported_done";
+    li.append(element("strong", `${s.title}${done ? " · 已完成" : ""}`));
+    li.append(element("p", s.instruction, "muted"));
+    s.source_ids.forEach((id) =>
+      li.append(linkButton("来源", () => viewSource(id), "chip tiny")),
+    );
+    if (task.state.plan_confirmed && done && task.status === "active")
+      li.append(
+        linkButton(
+          "回到这一步",
+          () => mutate("step", s.id, "needs_recheck"),
+          "chip tiny",
         ),
       );
-    });
-    content.append(d);
-  }
-  const transitions = {
-    proposed: [
-      ["accepted", "采用建议"],
-      ["rejected", "不采用"],
-    ],
-    accepted: [
-      ["executed", "我已执行"],
-      ["rejected", "取消"],
-    ],
-    executed: [
-      ["observed_success", "结果符合预期"],
-      ["observed_failure", "结果不符合"],
-      ["needs_recheck", "尚不确定"],
-    ],
-    needs_recheck: [
-      ["observed_success", "结果符合预期"],
-      ["observed_failure", "结果不符合"],
-    ],
-  };
-  const suggestions = task.suggestions.filter((s) => transitions[s.status]);
-  if (suggestions.length) {
-    const d = element("details");
-    d.append(element("summary", `建议跟进（${suggestions.length}）`));
-    suggestions.forEach((s) => {
-      const card = element("div", undefined, "suggestion");
-      card.append(element("p", s.text));
-      transitions[s.status].forEach(([value, label]) =>
-        card.append(linkButton(label, () => mutate("suggestion", s.id, value))),
-      );
-      d.append(card);
-    });
-    content.append(d);
-  }
-  $("confirm-plan").hidden = !plan || confirmed || task.state.preparing;
-  $("record-consent").hidden = !plan || confirmed;
-  $("resume-task").hidden = task.status !== "paused" || !confirmed;
-  $("retry-plan").hidden = !!plan || task.state.preparing || !!questions.length;
+    ol.append(li);
+  });
+  root.append(ol);
+  if (plan.prerequisites.length)
+    root.append(
+      element("p", `准备：${plan.prerequisites.join("；")}`, "muted"),
+    );
+  if (plan.cautions.length)
+    root.append(element("p", plan.cautions.join("；"), "warning"));
+  task.sources.forEach((s) =>
+    root.append(linkButton(s.title, () => viewSource(s.id), "chip tiny")),
+  );
+}
+const TRANSITIONS = {
+  proposed: [
+    ["accepted", "采用"],
+    ["rejected", "不采用"],
+  ],
+  accepted: [
+    ["executed", "已照做"],
+    ["rejected", "取消"],
+  ],
+  executed: [
+    ["observed_success", "有效"],
+    ["observed_failure", "没用"],
+    ["needs_recheck", "说不准"],
+  ],
+  needs_recheck: [
+    ["observed_success", "有效"],
+    ["observed_failure", "没用"],
+  ],
+};
+function renderFollowups(task) {
+  const root = $("followups");
+  root.replaceChildren();
+  if (!task) return 0;
+  const issues =
+    task.state.open_issues?.filter((i) => i.status === "open") || [];
+  issues.forEach((issue) => {
+    const card = element("div", undefined, "followup");
+    card.append(
+      element("p", issue.text),
+      linkButton(
+        "已解决",
+        () => mutate("issue", issue.id, "resolved_by_user"),
+        "chip tiny",
+      ),
+    );
+    root.append(card);
+  });
+  const suggestions = task.suggestions.filter((s) => TRANSITIONS[s.status]);
+  suggestions.forEach((s) => {
+    const card = element("div", undefined, "followup");
+    card.append(element("p", s.text));
+    TRANSITIONS[s.status].forEach(([value, label]) =>
+      card.append(
+        linkButton(label, () => mutate("suggestion", s.id, value), "chip tiny"),
+      ),
+    );
+    root.append(card);
+  });
+  const count = issues.length + suggestions.length;
+  if (!count) root.append(element("p", "暂时没有。", "muted"));
+  return count;
+}
+function renderTask(task) {
+  const key = JSON.stringify(task);
+  if (key === lastTaskRender) return;
+  lastTaskRender = key;
+  renderOutline(task);
+  const pendingFollowups = renderFollowups(task);
+  $("open-menu").dataset.count = pendingFollowups || "";
+  if (!task) return;
+  const questions = task.state.pending_questions || [];
+  if (task.state.plan_confirmed && task.plan) renderRun(task);
+  else renderPlanCard(task, questions);
   $("pause-task").hidden = task.status !== "active";
   $("finish-task").hidden = task.status === "ended";
 }
+async function stepForward() {
+  if (!current?.plan || current.status !== "active") return;
+  const index = currentIndex(current);
+  if (index < 0) return finishTask();
+  hideAnswer();
+  await mutate("step", current.plan.steps[index].id, "user_reported_done");
+}
+async function stepBack() {
+  if (!current?.plan || current.status !== "active") return;
+  const index = currentIndex(current);
+  const target = (index < 0 ? current.plan.steps.length : index) - 1;
+  if (target < 0) return;
+  hideAnswer();
+  await mutate("step", current.plan.steps[target].id, "needs_recheck");
+}
 async function finishTask() {
-  if (confirm("结束本次任务并停止记录？")) {
-    await mutate("finish");
-    await stopCamera();
-    $("messages").replaceChildren();
-    $("question").value = "";
-    conversation = sessionStorage["along-task-conversation"] =
-      crypto.randomUUID();
-    renderScreen();
-    toast("本次任务已结束");
-  }
+  if (!confirm("结束这次任务并停止记录？")) return;
+  closeMenu();
+  await mutate("finish");
+  await stopCamera();
+  hideAnswer();
+  $("messages").replaceChildren();
+  $("question").value = "";
+  conversation = sessionStorage["along-task-conversation"] =
+    crypto.randomUUID();
+  renderScreen();
+  toast("这次任务结束了");
 }
 async function refresh() {
   const request = ++refreshNumber;
@@ -837,9 +1019,10 @@ async function refresh() {
     ready = true;
     renderTask(current);
     syncCapture();
-    $("connection").textContent = state.busy ? "正在处理" : "已连接";
+    $("connection").textContent = state.busy ? "处理中" : "";
+    $("connection").dataset.state = state.busy ? "busy" : "ok";
     $("diagnostics").textContent =
-      `模型：${state.model}；媒体 ${(state.media.bytes / 1048576).toFixed(1)} MB / ${config.max_storage_mb} MB；语义检索${state.semantic_enabled ? "启用" : "关闭（关键词与模型扩展仍可用）"}；事件 ${state.jobs.map((j) => `${j.status}:${j.count}`).join(" / ") || "暂无"}${state.worker_error ? "；" + state.worker_error : ""}`;
+      `模型：${state.model}；媒体 ${(state.media.bytes / 1048576).toFixed(1)} MB / ${config.max_storage_mb} MB；语义检索${state.semantic_enabled ? "启用" : "关闭"}；事件 ${state.jobs.map((j) => `${j.status}:${j.count}`).join(" / ") || "暂无"}${state.worker_error ? "；" + state.worker_error : ""}`;
     const select = $("history-task"),
       selected = select.value;
     select.replaceChildren(new Option("选择任务", ""));
@@ -852,7 +1035,8 @@ async function refresh() {
     await showQueue();
   } catch (e) {
     if (request !== refreshNumber) return;
-    $("connection").textContent = "连接中断 · 记录暂存本机";
+    $("connection").textContent = "连接中断，记录暂存本机";
+    $("connection").dataset.state = "down";
     queueError = errorText(e);
     updateControls();
   }
@@ -860,7 +1044,8 @@ async function refresh() {
 async function prepareTask() {
   if (!current) throw new Error("没有当前任务");
   if (busy) return;
-  setBusy(true, "正在判断资料需求并准备方案…");
+  closeMenu();
+  setBusy(true, "正在准备方案…");
   try {
     await json(`/api/tasks/${current.id}/prepare`, {
       method: "POST",
@@ -936,18 +1121,35 @@ async function timeline() {
   }
   root.append(linkButton("查看该任务对话", () => refreshMessages(id)));
 }
-
+function autosize() {
+  const q = $("question");
+  q.style.height = "auto";
+  q.style.height = `${Math.min(q.scrollHeight, 160)}px`;
+}
+function openMenu() {
+  $("drawer").hidden = false;
+}
+function closeMenu() {
+  $("drawer").hidden = true;
+}
 bind("enter-instant", "click", () => enterMode("instant"));
 bind("enter-task", "click", () => enterMode("task"));
 bind("back-home", "click", goHome);
 bind("camera-toggle", "click", openCamera);
+bind("open-menu", "click", openMenu);
+bind("close-menu", "click", closeMenu);
+bind("drawer", "click", (e) => {
+  if (e.target === $("drawer")) closeMenu();
+});
+bind("next-step", "click", stepForward);
+bind("prev-step", "click", stepBack);
 bind("take-photo", "click", async () => {
   if (busy || voiceBusy || cameraPending || mode !== "instant") return;
   setBusy(true, "正在拍照…");
   try {
     const blob = await snapshot();
     if (!blob) {
-      toast("相机画面尚未就绪，请稍后拍照");
+      toast("相机画面还没准备好，稍等再拍");
       return;
     }
     photoCaptured = Date.now() / 1000;
@@ -972,27 +1174,28 @@ bind("retake-photo", "click", async () => {
   await openCamera();
 });
 bind("chat-form", "submit", submitQuestion);
+bind("question", "input", autosize);
 bind("question", "keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     return submitQuestion();
   }
 });
+document.querySelectorAll("[data-example]").forEach((b) =>
+  b.addEventListener("click", () => {
+    $("question").value = b.dataset.example;
+    autosize();
+    $("question").focus();
+  }),
+);
 async function beginTask(action) {
-  if (
-    !confirm(
-      action === "confirm_plan"
-        ? "已核对准备条件，同意开始任务并持续记录画面？"
-        : "继续任务并恢复画面记录？",
-    )
-  )
-    return;
   await openCamera();
   if (!stream) {
-    toast("请先开启相机，再开始任务");
+    toast("需要先开启相机才能开始");
     return;
   }
   try {
+    // The plan card already shows the recording notice; clicking “开始” is the consent.
     await mutate(action, "", action === "confirm_plan" ? "已核对适用条件" : "");
   } catch (e) {
     await stopCamera();
@@ -1001,7 +1204,10 @@ async function beginTask(action) {
 }
 bind("confirm-plan", "click", () => beginTask("confirm_plan"));
 bind("resume-task", "click", () => beginTask("resume"));
-bind("pause-task", "click", () => mutate("pause"));
+bind("pause-task", "click", async () => {
+  closeMenu();
+  await mutate("pause");
+});
 bind("finish-task", "click", finishTask);
 bind("retry-plan", "click", prepareTask);
 bind("prepare-form", "submit", async (e) => {
@@ -1041,14 +1247,17 @@ bind("retry-jobs", "click", async () => {
 });
 bind("close-dialog", "click", () => {
   $("evidence-dialog").close();
+});
+$("evidence-dialog").addEventListener("close", () => {
   blobURLs.forEach((url) => URL.revokeObjectURL(url));
   blobURLs.clear();
 });
-bind("mic", "click", async () => {
-  if (voiceRecorder?.state === "recording") {
-    voiceRecorder.stop();
-    return;
-  }
+
+function micLabel(text) {
+  $("mic-label").textContent = text;
+}
+async function startVoice() {
+  if (voiceRecorder?.state === "recording") return;
   if (busy || voiceBusy || cameraPending) return;
   voiceBusy = true;
   updateControls();
@@ -1056,15 +1265,16 @@ bind("mic", "click", async () => {
     voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const chunks = [];
     voiceRecorder = new MediaRecorder(voiceStream);
-    $("mic").textContent = "停止录音";
     voiceRecorder.ondataavailable = (e) => {
       if (e.data.size) chunks.push(e.data);
     };
     voiceRecorder.onstop = async () => {
       clearTimeout(voiceTimer);
       voiceStream.getTracks().forEach((t) => t.stop());
-      $("mic").textContent = "正在识别…";
+      $("mic").classList.remove("recording");
+      micLabel("正在听写…");
       $("mic").disabled = true;
+      let text = "";
       try {
         const form = new FormData();
         form.append(
@@ -1072,31 +1282,96 @@ bind("mic", "click", async () => {
           new Blob(chunks, { type: voiceRecorder.mimeType }),
           "voice.webm",
         );
-        const result = await json("/api/speech", {
-          method: "POST",
-          body: form,
-        });
-        $("question").value = result.text;
-        toast("语音已识别，请确认后发送");
+        text = (await json("/api/speech", { method: "POST", body: form })).text;
       } catch (e) {
         toast(errorText(e));
       } finally {
         voiceBusy = false;
-        $("mic").textContent = "语音提问";
+        micLabel("按住说话");
         updateControls();
       }
+      if (text?.trim()) {
+        $("question").value = text;
+        autosize();
+        await submitQuestion();
+      } else if (!text) toast("没听清，再说一次");
     };
     voiceRecorder.start();
+    $("mic").classList.add("recording");
+    micLabel("松开发送");
     updateControls();
     voiceTimer = setTimeout(() => {
       if (voiceRecorder.state === "recording") voiceRecorder.stop();
     }, 60000);
+    if (voiceHold.release) stopVoice();
   } catch (e) {
     voiceStream?.getTracks().forEach((t) => t.stop());
     voiceBusy = false;
-    $("mic").textContent = "语音提问";
+    $("mic").classList.remove("recording");
+    micLabel("按住说话");
     updateControls();
     throw e;
+  }
+}
+function stopVoice() {
+  if (voiceRecorder?.state === "recording") voiceRecorder.stop();
+}
+// Hold to talk; a quick tap toggles recording so the button also works without holding.
+function pressVoice() {
+  if (voiceRecorder?.state === "recording") {
+    voiceHold.toggle = false;
+    stopVoice();
+    return;
+  }
+  voiceHold = { pressed: Date.now(), release: false, toggle: false };
+  startVoice().catch((e) => toast(errorText(e)));
+}
+function releaseVoice() {
+  if (!voiceHold.pressed) return;
+  const held = Date.now() - voiceHold.pressed;
+  voiceHold.pressed = 0;
+  if (held < 350) {
+    voiceHold.toggle = true;
+    return;
+  }
+  if (voiceRecorder?.state === "recording") stopVoice();
+  else voiceHold.release = true;
+}
+$("mic").addEventListener("pointerdown", (e) => {
+  if ($("mic").disabled) return;
+  e.preventDefault();
+  pressVoice();
+});
+$("mic").addEventListener("pointerup", releaseVoice);
+$("mic").addEventListener("pointerleave", () => {
+  if (voiceHold.pressed && Date.now() - voiceHold.pressed >= 350)
+    releaseVoice();
+});
+$("mic").addEventListener("click", (e) => e.preventDefault());
+function typing(e) {
+  return ["TEXTAREA", "INPUT", "SELECT"].includes(e.target.tagName);
+}
+document.addEventListener("keydown", (e) => {
+  if (typing(e) || e.repeat || $("evidence-dialog").open) return;
+  if (!$("drawer").hidden) {
+    if (e.key === "Escape") closeMenu();
+    return;
+  }
+  if (e.code === "Space" && mode !== "home" && !$("mic").disabled) {
+    e.preventDefault();
+    pressVoice();
+  }
+  const running = mode === "task" && current?.state.plan_confirmed;
+  if (!running || busy) return;
+  if (e.key === "ArrowRight")
+    stepForward().catch((err) => toast(errorText(err)));
+  if (e.key === "ArrowLeft") stepBack().catch((err) => toast(errorText(err)));
+  if (e.key === "Escape") hideAnswer();
+});
+document.addEventListener("keyup", (e) => {
+  if (e.code === "Space" && !typing(e) && voiceHold.pressed) {
+    e.preventDefault();
+    releaseVoice();
   }
 });
 window.addEventListener("beforeunload", () => {
@@ -1120,4 +1395,5 @@ async function initialize() {
     setTimeout(initialize, 3000);
   }
 }
+renderScreen();
 initialize();

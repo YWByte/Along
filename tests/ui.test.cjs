@@ -100,6 +100,11 @@ async function setup(t, initial = null, options = {}) {
         },
       });
     if (path.startsWith("/api/messages/")) return route.fulfill({ json: [] });
+    if (path.startsWith("/api/media/"))
+      return route.fulfill({
+        contentType: "image/jpeg",
+        body: Buffer.alloc(0),
+      });
     if (path === "/api/media") {
       model.media.push(req.postData());
       return route.fulfill({ json: { id: `frame-${model.media.length}` } });
@@ -209,8 +214,8 @@ test("入口只有两个按钮；识别模式拍照前不能提问，重拍清�
   const first = model.requests.find((r) => r.path === "/api/chat").data;
   assert.equal(first.mode, "instant");
   assert.equal(first.task_id, null);
-  assert.equal(await page.locator("#messages details").count(), 0);
-  assert.equal(await page.locator("#task-panel").isVisible(), false);
+  assert.equal(await page.locator("#messages .evidence-link").count(), 0);
+  assert.equal(await page.locator("#task").isVisible(), false);
   await ask(page, "它是什么颜色？");
   assert.equal(model.media.length, 2);
   assert.equal(
@@ -237,7 +242,7 @@ test("入口只有两个按钮；识别模式拍照前不能提问，重拍清�
 test("任务从目标到方案、当前步骤、暂停恢复、完成；识别与任务采集隔离", async (t) => {
   const { page, model } = await setup(t);
   await page.click("#enter-task");
-  assert.equal(await page.locator("#camera-panel").isVisible(), false);
+  assert.equal(await page.locator("#camera").isVisible(), false);
   await ask(page, "整理工作台");
   assert.equal(await page.locator("#stage").textContent(), "确认方案");
   assert.equal(model.media.length, 0);
@@ -252,7 +257,7 @@ test("任务从目标到方案、当前步骤、暂停恢复、完成；识别�
   );
   await new Promise((r) => setTimeout(r, 500));
   assert.ok(model.media.length > 0);
-  await page.getByRole("button", { name: "已检查，下一步" }).click();
+  await page.click("#next-step");
   await page.waitForFunction(() =>
     document.querySelector(".current-step").textContent.includes("放入收纳盒"),
   );
@@ -278,10 +283,13 @@ test("任务从目标到方案、当前步骤、暂停恢复、完成；识别�
   assert.equal(await page.locator("#messages article").count(), 0);
   await page.click("#resume-task");
   await page.waitForFunction(
-    () => document.getElementById("task-status").textContent === "进行中",
+    () => document.getElementById("paused-overlay").hidden,
   );
-  await page.getByRole("button", { name: "已检查，完成这一步" }).click();
-  await page.getByRole("button", { name: "完成任务", exact: true }).click();
+  await page.getByRole("button", { name: "完成这一步" }).click();
+  await page.waitForFunction(
+    () => document.getElementById("next-step").textContent === "完成任务",
+  );
+  await page.click("#next-step");
   await page.waitForFunction(
     () => document.getElementById("stage").textContent === "说目标",
   );
@@ -296,7 +304,7 @@ test("相机拒绝授权可以重试，未拍照不能发送", async (t) => {
   );
   assert.match(
     await page.locator("#camera-placeholder").textContent(),
-    /无法打开相机/,
+    /相机没有打开/,
   );
   assert.equal(await page.locator("#send").isDisabled(), true);
   await page.click("#camera-toggle");
@@ -322,8 +330,8 @@ test("模型失败保留问题和照片，可重试；请求期间不允许切�
   assert.match(await page.locator("#messages").textContent(), /测试画面/);
 });
 
-test("修改方案不推进步骤；生成失败允许重试；取消开始不打开相机", async (t) => {
-  const { page, model } = await setup(t, draft(), { cancelDialogs: true });
+test("修改方案不推进步骤；生成失败允许重试；点击开始即开启记录", async (t) => {
+  const { page, model } = await setup(t, draft());
   await page.click("#enter-task");
   model.failPrepare = true;
   await ask(page, "换成三个盒子");
@@ -331,26 +339,52 @@ test("修改方案不推进步骤；生成失败允许重试；取消开始不�
   model.failPrepare = false;
   await ask(page, "换成三个盒子");
   assert.equal(model.task.state.plan_confirmed, false);
-  await page.click("#confirm-plan");
-  assert.equal(model.task.status, "draft");
   assert.equal(model.media.length, 0);
+  await page.click("#confirm-plan");
+  await page.waitForFunction(
+    () => document.getElementById("stage").textContent === "一起操作",
+  );
+  assert.equal(model.task.status, "active");
 });
 
-test("语音识别回填输入框，需要用户确认发送", async (t) => {
+test("按住说话松开即发送；轻点切换录音；空格键同样可用", async (t) => {
   const { page, model } = await setup(t);
   await photo(page);
-  await page.click("#mic");
-  await page.waitForFunction(
-    () => document.getElementById("mic").textContent === "停止录音",
+  const chats = () => model.requests.filter((r) => r.path === "/api/chat");
+  const box = await page.locator("#mic").boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForFunction(() =>
+    document.getElementById("mic").classList.contains("recording"),
   );
   assert.equal(await page.locator("#back-home").isDisabled(), true);
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(450);
+  await page.mouse.up();
+  await page.waitForFunction(
+    () => document.querySelectorAll("#messages article").length === 2,
+  );
+  assert.equal(chats().length, 1);
+  assert.equal(chats()[0].data.text, "这个东西是什么");
+  await page.click("#mic");
+  await page.waitForFunction(() =>
+    document.getElementById("mic").classList.contains("recording"),
+  );
+  await page.waitForTimeout(200);
   await page.click("#mic");
   await page.waitForFunction(
-    () => document.getElementById("question").value === "这个东西是什么",
+    () => document.querySelectorAll("#messages article").length === 4,
   );
-  assert.equal(model.requests.filter((r) => r.path === "/api/chat").length, 0);
-  assert.equal(await page.locator("#send").isDisabled(), false);
+  assert.equal(chats().length, 2);
+  await page.keyboard.down("Space");
+  await page.waitForFunction(() =>
+    document.getElementById("mic").classList.contains("recording"),
+  );
+  await page.waitForTimeout(450);
+  await page.keyboard.up("Space");
+  await page.waitForFunction(
+    () => document.querySelectorAll("#messages article").length === 6,
+  );
+  assert.equal(chats().length, 3);
 });
 
 test("移动端无横向溢出；已有任务不会在首页或识别模式自动采集", async (t) => {
@@ -385,7 +419,7 @@ test("版本冲突不前进、不丢失当前步骤", async (t) => {
   const { page, model } = await setup(t, task);
   await page.click("#enter-task");
   model.failChange = true;
-  await page.getByRole("button", { name: "已检查，下一步" }).click();
+  await page.click("#next-step");
   await page.waitForFunction(() =>
     document.getElementById("toast").textContent.includes("其他页面"),
   );
@@ -401,15 +435,12 @@ test("待澄清时不展示旧方案或允许开始，回答条件后恢复确�
   await page.waitForFunction(() => !document.getElementById("send").disabled);
   assert.equal(await page.locator("#stage").textContent(), "补充条件");
   assert.equal(await page.locator("#confirm-plan").isVisible(), false);
-  assert.equal(await page.locator(".plan-overview").count(), 0);
-  assert.match(await page.locator("#task-content").textContent(), /型号是什么/);
+  assert.equal(await page.locator(".plan-steps").count(), 0);
+  assert.match(await page.locator("#plan-body").textContent(), /型号是什么/);
   await ask(page, "只整理桌面，不拆设备");
   assert.equal(await page.locator("#confirm-plan").isVisible(), true);
   assert.equal(model.media.length, 0);
-  assert.match(
-    await page.locator("#task-content").textContent(),
-    /通用知识建议/,
-  );
+  assert.match(await page.locator("#plan-meta").textContent(), /通用知识/);
 });
 
 test("任务采集遵守每秒一帧，暂停后停止", async (t) => {
@@ -465,7 +496,7 @@ test("场景与跨帧依据折叠展示，不增加首页入口", async (t) => {
   assert.equal(await page.getByText(/设备安装与使用/).count(), 1);
   await page.fill("#question", "刚才接好了吗");
   await page.click("#send");
-  await page.getByText("查看依据", { exact: true }).click();
+  await page.locator("#answer .evidence-link").click();
   assert.equal(
     await page.getByText("本次核对：连接件方向", { exact: true }).count(),
     1,
@@ -474,4 +505,44 @@ test("场景与跨帧依据折叠展示，不增加首页入口", async (t) => {
     await page.getByRole("button", { name: "对比帧 1", exact: true }).count(),
     1,
   );
+});
+
+test("执行页先显示一句结论，可收起；方向键推进步骤，暂停时不推进", async (t) => {
+  const task = draft();
+  task.status = "active";
+  task.state.plan_confirmed = true;
+  const { page, model } = await setup(t, task, {
+    chatResult: { headline: "看得到在分类", reply: "左右两堆已经分开。" },
+  });
+  await page.click("#enter-task");
+  await page.waitForFunction(
+    () => document.getElementById("camera").videoWidth > 0,
+  );
+  assert.equal(await page.locator("#messages").isVisible(), false);
+  await ask(page, "这样分对吗");
+  assert.equal(
+    await page.locator("#answer .headline").textContent(),
+    "看得到在分类",
+  );
+  assert.match(await page.locator("#answer .detail").textContent(), /两堆/);
+  await page.click("#answer .close");
+  assert.equal(await page.locator("#answer").isVisible(), false);
+  await page.locator("body").click({ position: { x: 5, y: 300 } });
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(() =>
+    document.querySelector(".current-step").textContent.includes("放入收纳盒"),
+  );
+  assert.equal(model.task.state.steps.s1, "user_reported_done");
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForFunction(() =>
+    document.querySelector(".current-step").textContent.includes("分类物品"),
+  );
+  assert.equal(model.task.state.steps.s1, "needs_recheck");
+  await page.click("#open-menu");
+  await page.click("#pause-task");
+  await page.waitForFunction(
+    () => !document.getElementById("paused-overlay").hidden,
+  );
+  await page.keyboard.press("ArrowRight");
+  assert.equal(model.task.state.steps.s1, "needs_recheck");
 });

@@ -555,7 +555,7 @@ class Engine:
                 "recording_limits": "抽帧可能漏动作，画面可能遮挡。请按证据时间区分历史与当前。没有画面时不要声称看见。",
             }
             answer_prompt = (
-                "回答用户问题。reply 简短直接回答；observed、hypotheses、missing、checks 无必要则为空。"
+                "回答用户问题。headline 是屏幕上先显示的一句话结论，不超过30字，不重复问题；reply 简短直接回答，可补充 headline 之外的要点；observed、hypotheses、missing、checks 无必要则为空。"
                 "不要反复问已知目标、界面步骤和用户说明。不能把所有不确定都变成用户待办。"
                 "只问阻塞下一步且无法从记忆获得的一个关键问题，其余简短说明边界，不要求反复确认。"
                 "missing 是本轮必要缺口；仅真正阻塞任务的缺口才同时放入 blocking_missing，最多一个。"
@@ -956,13 +956,15 @@ class Engine:
                 )
             ):
                 answer = Answer(
-                    reply="还没有取得与你这次问题对应的过程画面，不能据此判断做得对错，也不需要重复操作。"
+                    headline="还没找到这段过程的画面",
+                    reply="还没有取得与你这次问题对应的过程画面，不能据此判断做得对错，也不需要重复操作。",
                 )
             elif visual_reviews and all(
                 r.get("error") or r.get("result", {}).get("visibility") == "unusable" for r in visual_reviews
             ):
                 answer = Answer(
-                    reply="这段记录不足以看清你问的变化，不能据此判断做错，也不需要为了确认而重复操作。"
+                    headline="这段画面看不清，暂不判断",
+                    reply="这段记录不足以看清你问的变化，不能据此判断做错，也不需要为了确认而重复操作。",
                 )
             elif visual_reviews or (context.get("scenario") in ("installation", "exercise") and images):
                 audit_started = time.monotonic()
@@ -977,12 +979,17 @@ class Engine:
                     )
                     context["answer_audit"] = audit.model_dump()
                     if audit.action == "revise":
-                        answer = Answer(reply=audit.corrected_reply, evidence_ids=audit.evidence_ids)
+                        answer = Answer(
+                            reply=audit.corrected_reply,
+                            headline=audit.corrected_headline,
+                            evidence_ids=audit.evidence_ids,
+                        )
                 except (ProviderError, OSError):
                     context["answer_audit"] = {"error": "回答证据审查未通过"}
                     warnings.append("回答证据审查暂不可用，未采用未经核对的动作判断。")
                     answer = Answer(
-                        reply="这次记录还不足以形成可靠判断，暂不据此评价是否正确，也不要求你重复操作。"
+                        headline="记录不足，暂不判断",
+                        reply="这次记录还不足以形成可靠判断，暂不据此评价是否正确，也不要求你重复操作。",
                     )
                 log.info(
                     "answer audit scene=%s elapsed_ms=%s",
@@ -996,7 +1003,10 @@ class Engine:
         images[:] = list(delivered_images.values())
         warnings.append("本轮回查未完成或已达调用上限，未采用缺少证据支持的判断。")
         return (
-            Answer(reply="这次回查还不足以确认你问的情况，暂时不能据此判断是否正确。"),
+            Answer(
+                headline="回查不足，暂不判断",
+                reply="这次回查还不足以确认你问的情况，暂时不能据此判断是否正确。",
+            ),
             research_decision,
             trace,
             warnings,

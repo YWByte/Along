@@ -3,154 +3,215 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>ALONG · 一起完成</title>
+    <title>ALONG</title>
     <link rel="stylesheet" href="/static/style.css" />
     <script src="/static/app.js" defer></script>
   </head>
-  <body>
-    <header>
-      <div>
-        <span class="brand">ALONG<span class="dot">●</span></span
-        ><span class="tagline">看见过程，一起完成。</span>
-      </div>
-      <span id="connection" class="badge">连接中</span>
+  <body data-mode="home">
+    <header class="bar">
+      <button id="back-home" class="ghost" aria-label="返回首页">←</button>
+      <span class="brand">ALONG</span>
+      <span id="mode-title" class="bar-mode"></span>
+      <span id="stage" class="bar-stage"></span>
+      <span id="connection" class="status" title="连接状态">连接中</span>
+      <button id="open-menu" class="ghost" aria-label="任务菜单" hidden>
+        ⋯
+      </button>
     </header>
+
     <main>
       <section id="home" class="home">
-        <h1>今天，一起做点什么？</h1>
-        <p class="muted">看懂眼前的东西，或一起完成一件事。</p>
+        <h1>今天想一起<br />做点什么？</h1>
         <div class="mode-choices">
           <button id="enter-task" class="mode-card" disabled>
-            <strong>任务模式</strong><span>告诉我目标，一起完成</span>
+            <span class="mono">01</span><strong>一起做</strong
+            ><span>说出目标，我陪你一步步完成</span>
           </button>
           <button id="enter-instant" class="mode-card" disabled>
-            <strong>识别模式</strong><span>拍下来，问问题</span>
+            <span class="mono">02</span><strong>看一看</strong
+            ><span>拍下眼前的东西，直接问</span>
           </button>
         </div>
       </section>
-      <section id="session" hidden>
-        <nav class="section-head">
-          <button id="back-home">← 返回首页</button
-          ><span id="mode-title">识别模式</span
-          ><span id="stage" class="muted"></span>
-        </nav>
-        <div id="workspace" class="workspace">
-          <section id="camera-panel" class="panel camera-panel" hidden>
-            <div class="section-head">
-              <h2 id="camera-title">拍下你想问的东西</h2>
-              <span id="capture-status" class="badge">相机未开启</span>
-            </div>
-            <div class="viewfinder">
-              <video id="camera" autoplay muted playsinline></video>
-              <img id="uploaded-preview" alt="本次提问的照片" hidden />
-              <div id="camera-placeholder" role="status">正在打开相机…</div>
-            </div>
-            <div class="toolbar camera-actions">
-              <button id="camera-toggle">重试开启相机</button
-              ><button id="take-photo" class="primary">拍照</button
-              ><button id="retake-photo" hidden>重拍</button>
-            </div>
-            <p id="camera-hint" class="muted"></p>
-          </section>
-          <div class="interaction">
-            <section id="task-panel" class="panel task-panel" hidden>
-              <div class="section-head">
-                <h2 id="task-heading">确认方案</h2>
-                <span id="task-status" class="badge"></span>
-              </div>
-              <div id="task-content"></div>
-              <div class="toolbar">
-                <button id="confirm-plan" class="primary" hidden>
-                  开始任务</button
-                ><button id="resume-task" class="primary" hidden>
-                  继续任务</button
-                ><button id="retry-plan" hidden>重新生成方案</button>
-              </div>
-              <p id="record-consent" class="muted" hidden>
-                开始后，相机会持续记录过程。需要分析的图片和文字会发送至模型；记录保存在本机。AI
-                不能认证操作安全。
-              </p>
-            </section>
-            <section class="panel chat-panel">
-              <h2 id="chat-heading">有什么想问的？</h2>
-              <p id="chat-hint" class="muted"></p>
-              <div id="messages" aria-live="polite"></div>
-              <div id="activity" class="muted" role="status"></div>
-              <form id="chat-form">
-                <textarea
-                  id="question"
-                  rows="2"
-                  maxlength="4000"
-                  placeholder="输入问题…"
-                  aria-label="问题或任务目标"
-                  required
-                ></textarea>
-                <div class="toolbar">
-                  <button type="button" id="mic">语音提问</button
-                  ><button type="submit" id="send" class="primary">发送</button>
-                </div>
-              </form>
-            </section>
+
+      <section id="instant" class="instant" hidden>
+        <div id="instant-view-slot" class="instant-view">
+          <div id="viewfinder" class="viewfinder">
+            <video id="camera" autoplay muted playsinline></video>
+            <img id="uploaded-preview" alt="本次提问的照片" hidden />
+            <div id="camera-placeholder" role="status">正在打开相机…</div>
+            <button id="camera-toggle" class="chip on-dark" hidden>
+              开启相机
+            </button>
+            <button id="retake-photo" class="chip on-dark" hidden>重拍</button>
+            <span id="capture-status" class="rec" hidden>记录中</span>
           </div>
         </div>
-        <details id="task-more" class="secondary" hidden>
-          <summary>任务选项与记录</summary>
-          <div class="toolbar">
-            <button id="pause-task">暂停任务</button
-            ><button id="finish-task">结束任务</button>
+        <div class="instant-side">
+          <div id="instant-intro" class="instant-intro">
+            <p class="eyebrow">看一看</p>
+            <h2 id="instant-title">对准它，按下快门</h2>
           </div>
-          <details>
-            <summary>补充资料或调整方案</summary>
-            <form id="prepare-form" class="stack">
-              <input
-                id="source-url"
-                type="url"
-                placeholder="可选：说明书或菜谱网址"
-                aria-label="资料网址"
-              /><input
-                id="revision-reason"
-                maxlength="2000"
-                placeholder="告诉我需要调整什么"
-                aria-label="调整原因"
-              /><button>重新生成方案</button>
-            </form>
-            <label class="file-button"
-              >导入说明书<input
-                id="source-file"
-                type="file"
-                accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
-                hidden
-            /></label>
-            <p class="muted">
-              调整前先暂停，新方案需重新确认。支持文字 PDF、TXT、Markdown。
+          <div id="instant-thread" class="thread-slot"></div>
+          <div class="shutter-row">
+            <button id="take-photo" class="shutter" aria-label="拍照"></button>
+          </div>
+          <div id="instant-composer-slot"></div>
+        </div>
+      </section>
+
+      <section id="task" class="task" hidden>
+        <div id="task-goal" class="pane center-pane" hidden>
+          <p class="eyebrow">一起做</p>
+          <h2 id="goal-title">想完成什么？</h2>
+          <p id="goal-hint" class="muted">
+            比如安装一个设备，或做一组放松动作。
+          </p>
+          <div id="goal-examples" class="examples">
+            <button class="chip" data-example="连接蓝牙音箱">
+              连接蓝牙音箱</button
+            ><button class="chip" data-example="放松一下手腕">
+              放松一下手腕</button
+            ><button class="chip" data-example="安装一个墙面挂钩">
+              安装一个墙面挂钩
+            </button>
+          </div>
+          <div id="goal-thread" class="thread-slot brief"></div>
+          <div id="goal-composer-slot"></div>
+        </div>
+
+        <div id="task-plan" class="pane plan-pane" hidden>
+          <article class="plan-card">
+            <p id="plan-meta" class="eyebrow"></p>
+            <h2 id="plan-title"></h2>
+            <div id="plan-body"></div>
+            <p id="record-consent" class="consent">
+              开始后，相机每秒记录一张画面，只保存在本机；你提问时，相关画面会发给模型分析。AI
+              的判断不等于安全认证。
             </p>
-          </details>
-          <details>
-            <summary>过程记录</summary>
-            <div class="toolbar">
-              <select id="history-task" aria-label="历史任务"></select
-              ><button id="timeline-refresh">查看记录</button
-              ><button id="delete-task" class="danger">删除所选任务</button>
+            <div class="plan-actions">
+              <button id="confirm-plan" class="primary big">开始</button>
+              <button id="retry-plan" hidden>重新生成方案</button>
             </div>
-            <div id="timeline"></div>
-          </details>
-          <details>
-            <summary>运行状态</summary>
-            <p id="queue-status" class="muted"></p>
-            <p id="diagnostics" class="muted"></p>
-            <button id="retry-jobs">重试失败的记录整理</button>
-          </details>
-        </details>
-        <p id="privacy-note" class="muted small">
-          拍照并发送问题后，照片和问题会发送至模型进行分析。
-        </p>
+          </article>
+          <div class="plan-adjust">
+            <div id="plan-thread" class="thread-slot brief"></div>
+            <div id="plan-composer-slot"></div>
+          </div>
+        </div>
+
+        <div id="task-run" class="run" hidden>
+          <ol id="progress" class="progress" aria-label="步骤进度"></ol>
+          <div class="run-main">
+            <div id="task-content" class="step-view"></div>
+            <aside id="pip-slot" class="pip"></aside>
+          </div>
+          <div id="answer" class="answer" hidden aria-live="polite"></div>
+          <div id="paused-overlay" class="paused" hidden>
+            <p class="eyebrow">已暂停</p>
+            <p>暂停期间不记录画面。</p>
+            <button id="resume-task" class="primary big">继续</button>
+          </div>
+          <div class="dock">
+            <button id="prev-step" class="ghost">← 上一步</button>
+            <div id="run-composer-slot" class="dock-center"></div>
+            <button id="next-step" class="primary">下一步 →</button>
+          </div>
+        </div>
       </section>
     </main>
+
+    <form id="chat-form" class="composer">
+      <div class="composer-row">
+        <button type="button" id="mic" class="mic" aria-label="按住说话">
+          <span class="mic-dot"></span><span id="mic-label">按住说话</span>
+        </button>
+        <textarea
+          id="question"
+          rows="1"
+          maxlength="4000"
+          placeholder="或者打字…"
+          aria-label="问题或任务目标"
+          required
+        ></textarea>
+        <button type="submit" id="send" class="send" aria-label="发送">
+          ↑
+        </button>
+      </div>
+      <p id="activity" class="activity" role="status"></p>
+    </form>
+
+    <div id="drawer" class="drawer" hidden>
+      <div class="drawer-panel" role="dialog" aria-label="任务菜单">
+        <div class="drawer-head">
+          <strong>任务</strong>
+          <button id="close-menu" class="ghost" aria-label="关闭">✕</button>
+        </div>
+        <div class="drawer-actions">
+          <button id="pause-task">暂停</button>
+          <button id="finish-task" class="danger">结束任务</button>
+        </div>
+        <details open>
+          <summary>对话</summary>
+          <div id="drawer-thread" class="thread-slot"></div>
+        </details>
+        <details>
+          <summary>完整方案</summary>
+          <div id="plan-outline"></div>
+        </details>
+        <details>
+          <summary>建议与待确认</summary>
+          <div id="followups"></div>
+        </details>
+        <details>
+          <summary>补充资料、调整方案</summary>
+          <form id="prepare-form" class="stack">
+            <input
+              id="source-url"
+              type="url"
+              placeholder="说明书或教程网址（可选）"
+              aria-label="资料网址"
+            /><input
+              id="revision-reason"
+              maxlength="2000"
+              placeholder="需要调整什么"
+              aria-label="调整原因"
+            /><button>重新生成方案</button>
+          </form>
+          <label class="file-button"
+            >导入说明书（PDF / TXT / MD）<input
+              id="source-file"
+              type="file"
+              accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
+              hidden
+          /></label>
+          <p class="muted">调整需先暂停，新方案要重新开始。</p>
+        </details>
+        <details>
+          <summary>过程记录</summary>
+          <div class="stack">
+            <select id="history-task" aria-label="历史任务"></select>
+            <div class="row">
+              <button id="timeline-refresh">查看记录</button
+              ><button id="delete-task" class="danger">删除所选任务</button>
+            </div>
+          </div>
+          <div id="timeline"></div>
+        </details>
+        <details>
+          <summary>运行状态</summary>
+          <p id="queue-status" class="muted"></p>
+          <p id="diagnostics" class="muted"></p>
+          <button id="retry-jobs">重试失败的记录整理</button>
+        </details>
+      </div>
+    </div>
+
+    <div id="messages" class="thread"></div>
     <div id="toast" role="alert" hidden></div>
     <dialog id="evidence-dialog">
-      <button id="close-dialog">关闭</button>
+      <button id="close-dialog" class="ghost" aria-label="关闭">✕</button>
       <div id="evidence-content"></div>
     </dialog>
-    <footer>ALONG · 不确定时，先补充依据。</footer>
   </body>
 </html>
