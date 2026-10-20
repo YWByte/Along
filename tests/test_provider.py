@@ -76,3 +76,19 @@ async def test_invalid_json_never_becomes_state():
 async def test_private_url_rejected(url):
     with pytest.raises(ValueError):
         await validate_public_url(url)
+
+
+async def test_sequence_request_retries_instead_of_accepting_answer_without_tool():
+    from along.schemas import MemoryRequest
+
+    responses = iter(['{"reply":"看不清，不能判断"}', '{"memory":{"tool":"open","frames":8}}'])
+    provider = CodexProxyProvider(Settings())
+    await provider.client.aclose()
+    provider.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, text=sse(next(responses))))
+    )
+    try:
+        result = await provider.structured("需要过程证据", MemoryRequest)
+        assert result.memory.tool == "open"
+    finally:
+        await provider.close()

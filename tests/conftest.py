@@ -12,6 +12,7 @@ from along.schemas import (
     FrameSelection,
     Observation,
     PlanDraft,
+    PlanAudit,
     Rank,
     ResearchDecision,
     Route,
@@ -56,6 +57,8 @@ class FakeVLM:
                     query="测试型号官方安装方向",
                 )
             )
+        if schema is PlanAudit:
+            return PlanAudit(action="keep")
         if schema is PlanDraft:
             ids = re.findall(r'"id":"(src_[a-z0-9]+)"', prompt)
             return PlanDraft(
@@ -66,7 +69,7 @@ class FakeVLM:
                     )
                 ],
             )
-        if schema is Answer:
+        if issubclass(schema, Answer):
             return Answer(
                 reply="请核对图示方向，当前证据不能认证安全。",
                 evidence_ids=["nonexistent"] if self.bad_evidence else [im.id for im in (images or [])],

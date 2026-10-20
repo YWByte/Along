@@ -28,15 +28,40 @@ class PlanDraft(BaseModel):
     prerequisites: list[str] = Field(default_factory=list, max_length=15)
     steps: list[Step] = Field(min_length=1, max_length=30)
     cautions: list[str] = Field(default_factory=list, max_length=15)
-    questions: list[str] = Field(default_factory=list, max_length=10)
+    questions: list[str] = Field(default_factory=list, max_length=1)
+
+
+class PlanAudit(BaseModel):
+    action: Literal["keep", "revise"]
+    issues: list[str] = Field(default_factory=list, max_length=5)
+    revised_plan: PlanDraft | None = None
+
+    @model_validator(mode="after")
+    def usable_revision(self):
+        if self.action == "revise" and self.revised_plan is None:
+            raise ValueError("修改方案必须提供完整修正版")
+        return self
+
+
+Scenario = Literal["installation", "exercise", "general"]
+
+
+class ReviewFocus(BaseModel):
+    temporal_scope: Literal[
+        "unspecified", "last_completed", "after_previous_answer", "recent", "explicit"
+    ] = "unspecified"
+    subject: str = Field(max_length=500)
+    step_id: str | None = Field(default=None, max_length=60)
+    plan_revision: int | None = Field(default=None, ge=0)
 
 
 class ResearchDecision(BaseModel):
-    action: Literal["direct", "search", "clarify"]
+    scenario: Scenario = "general"
+    action: Literal["direct", "search", "clarify", "stop"]
     reason: str = Field(min_length=1, max_length=1000)
     information_gap: str = Field(default="", max_length=1000)
     query: str = Field(default="", max_length=500)
-    questions: list[str] = Field(default_factory=list, max_length=5)
+    questions: list[str] = Field(default_factory=list, max_length=1)
     source_ids: list[str] = Field(default_factory=list, max_length=6)
     verification_required: bool = False
 
@@ -52,6 +77,8 @@ class ResearchDecision(BaseModel):
 
 
 class Route(BaseModel):
+    scenario: Scenario = "general"
+    review_focus: ReviewFocus | None = None
     intent: Literal["ask", "start", "pause", "resume", "finish", "clarify"]
     goal: str = ""
     related_to_task: bool = False
@@ -67,6 +94,9 @@ class SearchQuery(BaseModel):
 
 
 class MemoryCall(BaseModel):
+    allow_older: bool = False
+    reason: str = Field(default="", max_length=500)
+    replace_images: bool = False
     tool: Literal["browse", "search", "open", "current"]
     query: str = Field(default="", max_length=500)
     event_id: str | None = Field(default=None, max_length=100)
@@ -81,10 +111,38 @@ class MemoryCall(BaseModel):
 
     @model_validator(mode="after")
     def valid_range(self):
+        if self.allow_older and (self.tool != "open" or not self.reason.strip()):
+            raise ValueError("向更早记录追溯只适用于open，且必须说明原因")
         if self.start_time is not None and self.end_time is not None and self.start_time > self.end_time:
             raise ValueError("记忆时间范围反向")
         if self.tool == "search" and not self.query.strip():
             raise ValueError("搜索记忆需要查询内容")
+        return self
+
+
+class VisualChange(BaseModel):
+    claim: str = Field(min_length=1, max_length=800)
+    frame_ids: list[str] = Field(min_length=2, max_length=4)
+
+
+class VisualReview(BaseModel):
+    visibility: Literal["clear", "limited", "unusable"]
+    changes: list[VisualChange] = Field(default_factory=list, max_length=4)
+    summary: str = Field(min_length=1, max_length=1200)
+    limitations: list[str] = Field(default_factory=list, max_length=3)
+    needs_detail: bool = False
+
+
+class AnswerAudit(BaseModel):
+    action: Literal["keep", "revise"]
+    unsupported_claims: list[str] = Field(default_factory=list, max_length=4)
+    corrected_reply: str = Field(default="", max_length=1600)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def usable_correction(self):
+        if self.action == "revise" and not self.corrected_reply.strip():
+            raise ValueError("修改回答必须给出修正后的简短回答")
         return self
 
 
@@ -100,6 +158,24 @@ class Answer(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)
     source_ids: list[str] = Field(default_factory=list, max_length=10)
     suggestion: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def one_tool_per_turn(self):
+        if self.memory is not None and self.research is not None:
+            raise ValueError("每轮只允许申请一个工具：memory 与 research 不能同时设置")
+        return self
+
+
+class MemoryRequest(Answer):
+    memory: MemoryCall
+    research: None = None
+    reply: str = ""
+
+    @model_validator(mode="after")
+    def sequence_tool(self):
+        if self.memory.tool == "current":
+            raise ValueError("过程证据需要open片段，或先browse/search定位，不能只取current")
+        return self
 
 
 class FrameSelection(BaseModel):

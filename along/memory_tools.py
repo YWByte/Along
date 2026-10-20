@@ -179,10 +179,13 @@ class MemoryTools:
             return {"error": "此范围没有可用图片，不能据此判断动作未发生。"}, []
         low, high = call.start_time, call.end_time
         if event:
-            low, high = event["start"] - 2, event["end"] + 2
+            low = max(event["start"] - 2, low) if low is not None else event["start"] - 2
+            high = min(event["end"] + 2, high) if high is not None else event["end"] + 2
         elif call.tool == "open" and call.step_id is not None and low is None and high is None:
             low = self.store.one("SELECT MIN(captured) AS t FROM media WHERE " + where, args)["t"]
             high = latest
+        if call.before_time is not None and call.tool == "open":
+            high = min(high if high is not None else latest, np.nextafter(call.before_time, -np.inf))
         if call.tool == "current":
             low = high = latest
         else:
@@ -222,7 +225,9 @@ class MemoryTools:
             else:
                 missing += 1
         gaps = [b["captured"] - a["captured"] for a, b in zip(rows, rows[1:])]
+        selected_gaps = [b["captured"] - a["captured"] for a, b in zip(frames, frames[1:])]
         return {
+            "selected_gap_seconds": round(max(selected_gaps), 3) if selected_gaps else None,
             "event_id": event["id"] if event else None,
             "start": low,
             "end": min(high, self.cutoff),

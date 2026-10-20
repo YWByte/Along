@@ -183,7 +183,7 @@ def test_agent_reads_sequence_despite_route_without_history(app, client):
     contexts, viewed = [], []
 
     async def respond(prompt, schema, images=None):
-        if schema is not Answer:
+        if not issubclass(schema, Answer):
             return await original(prompt, schema, images)
         context = json.loads(prompt.split("\n")[-1])
         contexts.append(context)
@@ -210,7 +210,7 @@ def test_agent_three_round_limit_and_duplicate_detection(app, client):
     original = app.state.engine.vlm.structured
 
     async def respond(prompt, schema, images=None):
-        if schema is Answer:
+        if issubclass(schema, Answer):
             return Answer(reply="", memory=MemoryCall(tool="open"))
         return await original(prompt, schema, images)
 
@@ -278,7 +278,7 @@ def test_agent_search_then_open_rechecks_raw_images(app, client):
     original = app.state.engine.vlm.structured
 
     async def respond(prompt, schema, images=None):
-        if schema is not Answer:
+        if not issubclass(schema, Answer):
             return await original(prompt, schema, images)
         context = json.loads(prompt.split("\n")[-1])
         trace = context["memory_tool_results"]
@@ -308,7 +308,7 @@ def test_memory_and_web_budgets_are_independent(app, client):
 
     async def respond(prompt, schema, images=None):
         nonlocal responses
-        if schema is not Answer:
+        if not issubclass(schema, Answer):
             return await original(prompt, schema, images)
         responses += 1
         context = json.loads(prompt.split("\n")[-1])
@@ -344,7 +344,7 @@ def test_concurrent_task_change_rejects_memory_answer(app, client):
 
     async def respond(prompt, schema, images=None):
         nonlocal responses
-        if schema is not Answer:
+        if not issubclass(schema, Answer):
             return await original(prompt, schema, images)
         responses += 1
         if responses == 1:
@@ -394,7 +394,7 @@ def test_process_answer_must_not_confuse_unread_memory_with_missing_evidence(app
 
     async def respond(prompt, schema, images=None):
         nonlocal responses
-        if schema is not Answer:
+        if not issubclass(schema, Answer):
             return await original(prompt, schema, images)
         responses += 1
         context = json.loads(prompt.split("\n")[-1])
@@ -420,7 +420,7 @@ def test_ignored_evidence_feedback_never_publishes_premature_evaluation(app, cli
     original = app.state.engine.vlm.structured
 
     async def respond(prompt, schema, images=None):
-        if schema is Answer:
+        if issubclass(schema, Answer):
             return Answer(reply="动作完全正确，无需查看", suggestion="直接继续")
         return await original(prompt, schema, images)
 

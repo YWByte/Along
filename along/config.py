@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     retention_days: int = Field(default=7, ge=1)
     max_images: int = Field(default=12, ge=2, le=24)
     memory_rounds: int = Field(default=3, ge=1, le=3)
+    memory_recent_seconds: int = Field(default=30, ge=10, le=120)
     memory_results: int = Field(default=5, ge=1, le=10)
     clip_frames: int = Field(default=8, ge=2, le=12)
     clip_seconds: int = Field(default=8, ge=2, le=120)

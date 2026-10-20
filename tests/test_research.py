@@ -161,7 +161,7 @@ def test_in_task_search_is_bounded_and_does_not_rewrite_plan(app, client):
     rounds = []
 
     async def answer(prompt, schema, images=None):
-        if schema is Answer:
+        if issubclass(schema, Answer):
             context = json.loads(prompt.split("\n")[-1])
             rounds.append(context)
             if not context["reference_sources"]:
@@ -191,7 +191,7 @@ def test_repeated_tool_request_is_rejected_without_search_loop(app, client):
     original = engine.vlm.structured
 
     async def always_search(prompt, schema, images=None):
-        if schema is Answer:
+        if issubclass(schema, Answer):
             return Answer(reply="再搜", research=search())
         return await original(prompt, schema, images)
 
@@ -208,7 +208,7 @@ def test_search_failure_does_not_emit_intermediate_suggestion(app, client):
     original = engine.vlm.structured
 
     async def request_search(prompt, schema, images=None):
-        if schema is Answer:
+        if issubclass(schema, Answer):
             return Answer(reply="待查", research=search(), suggestion="未经核验的动作")
         return await original(prompt, schema, images)
 

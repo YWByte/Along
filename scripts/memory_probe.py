@@ -25,10 +25,10 @@ from along.store import dump
 
 class NoWeb:
     async def search(self, query):
-        raise AssertionError("A simple wrist replay must not request web search")
+        raise AssertionError("An offline memory replay must not request web search")
 
     async def fetch(self, url):
-        raise AssertionError("A simple wrist replay must not fetch webpages")
+        raise AssertionError("An offline memory replay must not fetch webpages")
 
 
 def snapshot(source_dir, target, task_id, cutoff, raw_only=False):
@@ -115,7 +115,20 @@ async def main(args):
             )
             tools = result.get("retrieval", {}).get("tools", [])
             assert any(entry["call"]["tool"] == "open" for entry in tools), "Agent did not open a clip"
-            assert 4 <= len(result["retrieval"]["frames"]) <= 12, "Agent did not review a bounded sequence"
+            assert 4 <= len(result["retrieval"]["frames"]) <= 37, "Agent exceeded session image budget"
+            assert all(len(t["result"].get("frames", [])) <= 12 for t in tools)
+            if args.expected_after is not None:
+                new_frames = {
+                    f["id"]
+                    for t in tools
+                    for f in t["result"].get("frames", [])
+                    if f["captured"] > args.expected_after
+                }
+                assert len(new_frames) >= 4, "Agent reviewed stale footage instead of the new attempt"
+            if args.expected_focus:
+                assert result.get("review_focus", {}).get("step_id") == args.expected_focus, (
+                    "Discussion target drifted"
+                )
             if args.expected_step:
                 directory_info = result["retrieval"]["directory"]
                 assert directory_info["last_user_completed_step"]["step_id"] == args.expected_step
@@ -154,6 +167,8 @@ if __name__ == "__main__":
     parser.add_argument("--cutoff", type=float, required=True)
     parser.add_argument("--question", default="我现在做的过程对吗")
     parser.add_argument("--expected-step")
+    parser.add_argument("--expected-focus")
+    parser.add_argument("--expected-after", type=float)
     parser.add_argument("--expected-revision", type=int, default=1)
     parser.add_argument("--raw-only", action="store_true", help="Simulate summaries not yet being available")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

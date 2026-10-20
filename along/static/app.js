@@ -287,9 +287,29 @@ function message(role, text, data = {}) {
         box.append(ul);
       }
     }
-    if (data.evidence_ids?.length || data.source_ids?.length) {
+    if (
+      data.evidence_ids?.length ||
+      data.source_ids?.length ||
+      data.retrieval?.visual_reviews?.length
+    ) {
       const d = element("details");
       d.append(element("summary", "查看依据"));
+      if (data.review_focus?.subject)
+        d.append(
+          element("p", `本次核对：${data.review_focus.subject}`, "muted"),
+        );
+      for (const review of data.retrieval?.visual_reviews || []) {
+        if (!review.result) continue;
+        d.append(
+          element("p", `画面观察（不是动作认证）：${review.result.summary}`),
+        );
+        for (const change of review.result.changes || []) {
+          d.append(element("p", change.claim));
+          change.frame_ids.forEach((id, i) =>
+            d.append(linkButton(`对比帧 ${i + 1}`, () => viewMedia(id))),
+          );
+        }
+      }
       data.evidence_ids?.forEach((id, i) =>
         d.append(linkButton(`过程图片 ${i + 1}`, () => viewMedia(id))),
       );
@@ -633,7 +653,18 @@ function renderTask(task) {
       references: "参考资料生成 · 不代表已独立核验",
       mixed: "部分步骤有资料依据，其余为通用建议",
     };
-    content.append(element("p", labels[basis], "muted"));
+    const sceneNames = {
+      installation: "设备安装与使用",
+      exercise: "日常锻炼与放松",
+    };
+    const sceneName = sceneNames[task.state.scenario];
+    content.append(
+      element(
+        "p",
+        [sceneName, labels[basis]].filter(Boolean).join(" · "),
+        "muted",
+      ),
+    );
     const overview = element(
       confirmed ? "details" : "div",
       undefined,

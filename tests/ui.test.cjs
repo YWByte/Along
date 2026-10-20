@@ -117,6 +117,7 @@ async function setup(t, initial = null, options = {}) {
         json: {
           reply:
             data.mode === "instant" ? "这是一个测试画面。" : "方案已准备好。",
+          ...(options.chatResult || {}),
           checks: ["核对眼前状态"],
           evidence_ids: ["frame-1"],
         },
@@ -436,4 +437,41 @@ test("任务采集遵守每秒一帧，暂停后停止", async (t) => {
   const uploads = model.media.length;
   await new Promise((resolve) => setTimeout(resolve, 1200));
   assert.equal(model.media.length, uploads);
+});
+
+test("场景与跨帧依据折叠展示，不增加首页入口", async (t) => {
+  const task = draft();
+  task.state.scenario = "installation";
+  task.state.plan_confirmed = true;
+  task.status = "paused";
+  const { page } = await setup(t, task, {
+    chatResult: {
+      review_focus: { subject: "连接件方向" },
+      retrieval: {
+        visual_reviews: [
+          {
+            result: {
+              summary: "连接件前后朝向不同，尚不能确认内部连接。",
+              changes: [
+                { claim: "连接件发生转向", frame_ids: ["frame-1", "frame-2"] },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  });
+  await page.click("#enter-task");
+  assert.equal(await page.getByText(/设备安装与使用/).count(), 1);
+  await page.fill("#question", "刚才接好了吗");
+  await page.click("#send");
+  await page.getByText("查看依据", { exact: true }).click();
+  assert.equal(
+    await page.getByText("本次核对：连接件方向", { exact: true }).count(),
+    1,
+  );
+  assert.equal(
+    await page.getByRole("button", { name: "对比帧 1", exact: true }).count(),
+    1,
+  );
 });

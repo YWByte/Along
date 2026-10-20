@@ -203,7 +203,7 @@ def test_previous_step_question_sees_directory_before_any_tool(app, client):
     original = app.state.engine.vlm.structured
 
     async def respond(prompt, schema, images=None):
-        if schema is not Answer:
+        if not issubclass(schema, Answer):
             return await original(prompt, schema, images)
         context = json.loads(prompt.split("\n")[-1])
         directory = context["task_event_directory"]
@@ -232,7 +232,7 @@ def test_instant_mode_has_no_task_directory(app, client):
     original = app.state.engine.vlm.structured
 
     async def respond(prompt, schema, images=None):
-        if schema is Answer:
+        if issubclass(schema, Answer):
             context = json.loads(prompt.split("\n")[-1])
             assert context["task_event_directory"] is None and context["adopted_plan"] is None
         return await original(prompt, schema, images)

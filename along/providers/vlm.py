@@ -48,6 +48,8 @@ class CodexProxyProvider:
         self.last_metrics: dict = {}
 
     async def text(self, prompt: str, images: list[ImageInput] | None = None) -> str:
+        if len(images or []) > self.settings.max_images:
+            raise ProviderError("单次模型图片超过预算，拒绝静默截断证据")
         content = [{"type": "input_text", "text": prompt}]
         for image in (images or [])[: self.settings.max_images]:
             encoded = base64.b64encode(await asyncio.to_thread(image.path.read_bytes)).decode()
