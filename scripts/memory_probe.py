@@ -31,7 +31,7 @@ class NoWeb:
         raise AssertionError("A simple wrist replay must not fetch webpages")
 
 
-def snapshot(source_dir, target, task_id, cutoff):
+def snapshot(source_dir, target, task_id, cutoff, raw_only=False):
     source = sqlite3.connect((source_dir / "along.sqlite3").as_uri() + "?mode=ro", uri=True)
     destination = sqlite3.connect(target / "along.sqlite3")
     try:
@@ -44,6 +44,7 @@ def snapshot(source_dir, target, task_id, cutoff):
         if not checkpoint:
             raise ValueError("No task checkpoint exists before the requested cutoff")
         state = json.loads(checkpoint["state"])
+        destination.execute("UPDATE tasks SET status='ended' WHERE id<>?", (task_id,))
         destination.execute(
             "UPDATE tasks SET status=?,state=?,plan=?,version=?,updated=? WHERE id=?",
             (
@@ -59,6 +60,8 @@ def snapshot(source_dir, target, task_id, cutoff):
         destination.execute("DELETE FROM checkpoints WHERE created>=?", (cutoff,))
         destination.execute("DELETE FROM ledger WHERE created>=?", (cutoff,))
         destination.execute("DELETE FROM events WHERE end>=?", (cutoff,))
+        if raw_only:
+            destination.execute("DELETE FROM events WHERE task_id=?", (task_id,))
         destination.execute("DELETE FROM media WHERE captured>=?", (cutoff,))
         destination.execute("DELETE FROM requests")
         destination.execute("DELETE FROM jobs")
@@ -83,7 +86,7 @@ def snapshot(source_dir, target, task_id, cutoff):
 async def main(args):
     with tempfile.TemporaryDirectory(prefix="along-memory-replay-") as tmp:
         directory = Path(tmp)
-        snapshot(args.source_dir, directory, args.task_id, args.cutoff)
+        snapshot(args.source_dir, directory, args.task_id, args.cutoff, args.raw_only)
         app = create_app(
             Settings(data_dir=directory, worker_enabled=False, semantic_enabled=False), web=NoWeb()
         )
@@ -113,6 +116,29 @@ async def main(args):
             tools = result.get("retrieval", {}).get("tools", [])
             assert any(entry["call"]["tool"] == "open" for entry in tools), "Agent did not open a clip"
             assert 4 <= len(result["retrieval"]["frames"]) <= 12, "Agent did not review a bounded sequence"
+            if args.expected_step:
+                directory_info = result["retrieval"]["directory"]
+                assert directory_info["last_user_completed_step"]["step_id"] == args.expected_step
+                reviewed = {
+                    frame["id"]
+                    for entry in tools
+                    if entry["call"]["tool"] == "open"
+                    for frame in entry["result"].get("frames", [])
+                    if frame["step_id"] == args.expected_step
+                    and frame["plan_revision"] == args.expected_revision
+                }
+                assert len(reviewed) >= 4, "Agent failed to inspect the previous task step"
+                print(
+                    dump(
+                        {
+                            "expected_step": args.expected_step,
+                            "reviewed_target_frames": len(reviewed),
+                            "raw_only": args.raw_only,
+                            "directory": directory_info,
+                        }
+                    ),
+                    flush=True,
+                )
             assert not result["source_ids"], "Simple wrist replay unexpectedly relied on web sources"
             assert len(result["missing"]) <= 1, "Too many interruptions"
             print(
@@ -127,5 +153,8 @@ if __name__ == "__main__":
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--cutoff", type=float, required=True)
     parser.add_argument("--question", default="我现在做的过程对吗")
+    parser.add_argument("--expected-step")
+    parser.add_argument("--expected-revision", type=int, default=1)
+    parser.add_argument("--raw-only", action="store_true", help="Simulate summaries not yet being available")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     asyncio.run(main(parser.parse_args()))

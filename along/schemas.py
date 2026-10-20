@@ -73,6 +73,7 @@ class MemoryCall(BaseModel):
     start_time: float | None = Field(default=None, allow_inf_nan=False)
     end_time: float | None = Field(default=None, allow_inf_nan=False)
     before_time: float | None = Field(default=None, allow_inf_nan=False)
+    offset: int = Field(default=0, ge=0, le=1000000)
     step_id: str | None = Field(default=None, max_length=60)
     plan_revision: int | None = Field(default=None, ge=0)
     seconds: int = Field(default=8, ge=1, le=120)

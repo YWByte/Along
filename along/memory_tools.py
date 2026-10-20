@@ -7,6 +7,7 @@ from collections import Counter
 import numpy as np
 
 from along.indexing import terms
+from along.memory_catalog import MemoryCatalog
 from along.providers.vlm import ProviderError
 from along.schemas import MemoryCall
 
@@ -17,6 +18,7 @@ class MemoryTools:
         self.store = memory.store
         self.settings = memory.settings
         self.task_id = task_id
+        self._catalog = None
         self.cutoff = cutoff if cutoff is not None else time.time()
 
     def overview(self):
@@ -30,7 +32,7 @@ class MemoryTools:
         )["n"]
         row["latest_age_seconds"] = round(self.cutoff - row["last"], 1) if row["last"] else None
         row["note"] = (
-            "记录时间不是动作证明；可直接 open 最近片段，无需等待事件索引。current 只读最近相机记录，不触发新拍摄。"
+            "先根据任务事件目录选择步骤和时间段，再打开原图。current 只读最近相机记录，不触发新拍摄。"
         )
         return row
 
@@ -128,36 +130,21 @@ class MemoryTools:
             "events": [self.describe(e) for e in selected],
             "warnings": warnings,
             "overview": self.overview(),
-            "hint": "摘要仅供定位；需要确认过程时 open 原图片段。空结果可 browse 或直接 open 最近片段。",
+            "hint": "摘要仅供定位；空结果时先核对目录的步骤和时段，再 browse 或按目标范围 open，不自动退到最近片段。",
         }, []
+
+    def catalog(self, task=None):
+        if self._catalog is None:
+            self._catalog = MemoryCatalog(self.memory, task or self.store.task(self.task_id), self.cutoff)
+        return self._catalog
 
     def browse(self, call):
-        where, args = self.filters(call)
-        events = self.store.rows(
-            "SELECT e.* FROM events e WHERE " + where + " ORDER BY e.start DESC,e.id DESC LIMIT ?",
-            [*args, self.settings.memory_results],
-        )
-        return {
-            "events": [self.describe(e) for e in events],
-            "next_before_time": events[-1]["start"] if events else None,
-            "overview": self.overview(),
-            "hint": "旧记录用 before_time 向前翻页；近期未索引图片可直接 open。",
-        }, []
+        if not self.store.one("SELECT id FROM tasks WHERE id=?", (self.task_id,)):
+            return {"events": [], "unindexed_windows": [], "error": "任务不存在"}, []
+        return self.catalog().browse(call, self.settings.memory_results), []
 
     def open(self, call, capacity):
-        clauses = ["task_id=?", "kind='frame'", "expired=0", "captured<=?"]
-        args = [self.task_id, self.cutoff]
-        for key in ("step_id", "plan_revision"):
-            if getattr(call, key) is not None:
-                clauses.append(f"{key}=?")
-                args.append(getattr(call, key))
-        if call.tool == "current":
-            clauses.append("origin='camera'")
-        where = " AND ".join(clauses)
-        latest = self.store.one("SELECT MAX(captured) AS t FROM media WHERE " + where, args)["t"]
-        if latest is None:
-            return {"error": "此范围没有可用图片，不能据此判断动作未发生。"}, []
-        low, high = call.start_time, call.end_time
+        event = None
         if call.event_id:
             event = self.store.one(
                 "SELECT * FROM events WHERE task_id=? AND id=? AND end<=?",
@@ -165,7 +152,37 @@ class MemoryTools:
             )
             if not event:
                 return {"error": "片段不存在或不属于当前任务。"}, []
+        elif call.tool == "open" and call.step_id is not None and call.plan_revision is None:
+            return {"error": "按步骤打开时须同时指定 plan_revision，避免不同版本同名步骤混用。"}, []
+        clauses = ["task_id=?", "kind='frame'", "expired=0", "captured<=?"]
+        args = [self.task_id, self.cutoff]
+        for key in ("step_id", "plan_revision"):
+            if getattr(call, key) is not None:
+                clauses.append(f"{key}=?")
+                args.append(getattr(call, key))
+        if event:
+            tags = self.store.rows(
+                "SELECT DISTINCT plan_revision,step_id FROM media WHERE task_id=? "
+                "AND id IN (SELECT value FROM json_each(?))",
+                (self.task_id, event["frame_ids"]),
+            )
+            if len(tags) == 1:
+                for key in ("step_id", "plan_revision"):
+                    if getattr(call, key) is None:
+                        clauses.append(f"{key} IS ?")
+                        args.append(tags[0][key])
+        if call.tool == "current":
+            clauses.append("origin='camera'")
+        where = " AND ".join(clauses)
+        latest = self.store.one("SELECT MAX(captured) AS t FROM media WHERE " + where, args)["t"]
+        if latest is None:
+            return {"error": "此范围没有可用图片，不能据此判断动作未发生。"}, []
+        low, high = call.start_time, call.end_time
+        if event:
             low, high = event["start"] - 2, event["end"] + 2
+        elif call.tool == "open" and call.step_id is not None and low is None and high is None:
+            low = self.store.one("SELECT MIN(captured) AS t FROM media WHERE " + where, args)["t"]
+            high = latest
         if call.tool == "current":
             low = high = latest
         else:
@@ -175,7 +192,11 @@ class MemoryTools:
                 seconds = call.seconds if "seconds" in call.model_fields_set else self.settings.clip_seconds
                 low = high - seconds
         if high < low or high - low > 120:
-            return {"error": "一次片段须为 0–120 秒，请缩小时间范围。"}, []
+            return {
+                "error": "该范围超过120秒或时间反向，请根据目录选择事件或更小时间段。",
+                "start": low,
+                "end": high,
+            }, []
         count = min(capacity, call.frames if "frames" in call.model_fields_set else self.settings.clip_frames)
         if call.tool == "current":
             count = min(count, 1)
@@ -202,6 +223,7 @@ class MemoryTools:
                 missing += 1
         gaps = [b["captured"] - a["captured"] for a, b in zip(rows, rows[1:])]
         return {
+            "event_id": event["id"] if event else None,
             "start": low,
             "end": min(high, self.cutoff),
             "available_frames": len(rows),

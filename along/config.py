@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     clip_frames: int = Field(default=8, ge=2, le=12)
     clip_seconds: int = Field(default=8, ge=2, le=120)
     memory_candidates: int = Field(default=512, ge=40, le=4096)
+    memory_catalog_chars: int = Field(default=24000, ge=4000, le=100000)
     agent_timeout: float = Field(default=100, ge=10, le=110)
     whisper_model: str = "small"
     semantic_enabled: bool = False
