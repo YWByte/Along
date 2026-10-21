@@ -287,7 +287,9 @@ class Engine:
                 continue
             seen.add(result["url"])
             try:
-                content = await self.web.fetch(result["url"])
+                content = result.get("content", "")
+                if not content.strip():
+                    content = await self.web.fetch(result["url"])
                 if not content.strip():
                     raise ProviderError("正文为空")
                 sources.append(self.save_source(task_id, result["title"], result["url"], content))

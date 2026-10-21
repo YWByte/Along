@@ -1,15 +1,10 @@
 import asyncio
 import ipaddress
-import os
-import re
 import socket
-from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
 
-from dotenv import dotenv_values
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+import httpx
 
 from along.config import Settings
 from along.providers.vlm import ProviderError
@@ -18,6 +13,7 @@ from along.providers.vlm import ProviderError
 class WebProvider(Protocol):
     async def search(self, query: str) -> list[dict]: ...
     async def fetch(self, url: str) -> str: ...
+    async def close(self) -> None: ...
 
 
 async def validate_public_url(url: str) -> str:
@@ -35,62 +31,85 @@ async def validate_public_url(url: str) -> str:
     return url
 
 
-class MCPWebProvider:
+class DeepSeekWebProvider:
     def __init__(self, settings: Settings):
         self.settings = settings
+        base = settings.deepseek_base_url.rstrip("/")
+        self.tools_url = f"{base}/tools" if base.endswith("/v1") else f"{base}/v1/tools"
+        self.client = httpx.AsyncClient(timeout=httpx.Timeout(settings.request_timeout, connect=10))
 
-    async def call(self, directory: Path, tool: str, arguments: dict) -> str:
-        executable = directory / "node_modules/.bin/tsx"
-        if not executable.is_file():
-            raise ProviderError(f"MCP 服务依赖未安装：{directory}")
-        env = dict(os.environ)
-        env["CODEBUDDY_TOKEN_FILE"] = str(self.settings.token_file)
-        if tool == "fetch_web":
-            token = dotenv_values(self.settings.token_file).get("COPILOT_TOKEN")
-            if not token:
-                raise ProviderError("网页 MCP 缺少可用凭据")
-            env["CODEBUDDY_TOKEN"] = token
-        params = StdioServerParameters(
-            command=str(executable), args=[str(directory / "server.ts")], cwd=str(directory), env=env
-        )
-        try:
-            async with asyncio.timeout(50):
-                async with stdio_client(params) as (read, write):
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
-                        result = await session.call_tool(tool, arguments)
-                        if result.isError:
-                            raise ProviderError(f"{tool} 返回错误；请检查网络和 MCP 服务")
-                        text = "\n".join(p.text for p in result.content if p.type == "text")
-                        if not text.strip():
-                            raise ProviderError(f"{tool} 没有返回内容")
-                        return text
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            # MCP ExceptionGroup may include upstream credentials; do not expose its text.
-            raise ProviderError(f"{tool} 调用失败；没有使用虚构搜索结果替代") from exc
+    def headers(self) -> dict[str, str]:
+        if self.settings.deepseek_api_key is None:
+            raise ProviderError("DeepSeek 搜索未配置 ALONG_DEEPSEEK_API_KEY")
+        key = self.settings.deepseek_api_key.get_secret_value().strip()
+        if not key:
+            raise ProviderError("DeepSeek 搜索未配置 ALONG_DEEPSEEK_API_KEY")
+        return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+    async def request(self, endpoint: str, payload: dict) -> dict:
+        for attempt in range(2):
+            try:
+                response = await self.client.post(
+                    f"{self.tools_url}/{endpoint}", headers=self.headers(), json=payload
+                )
+                if response.status_code in (408, 429, 500, 502, 503, 504) and attempt == 0:
+                    await asyncio.sleep(1)
+                    continue
+                if response.status_code == 401:
+                    raise ProviderError("DeepSeek 搜索鉴权失败；请检查 API Key")
+                if response.status_code == 402:
+                    raise ProviderError("DeepSeek 搜索账户余额不足")
+                if response.is_error:
+                    raise ProviderError(
+                        f"DeepSeek {endpoint} HTTP {response.status_code}；未使用虚构资料替代"
+                    )
+                body = response.json()
+                if not isinstance(body, dict):
+                    raise ProviderError(f"DeepSeek {endpoint} 返回格式无效")
+                return body
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                if attempt == 0:
+                    await asyncio.sleep(1)
+                    continue
+                raise ProviderError(f"DeepSeek {endpoint} 连接失败或超时") from exc
+            except ValueError as exc:
+                raise ProviderError(f"DeepSeek {endpoint} 返回的 JSON 无效") from exc
+        raise ProviderError(f"DeepSeek {endpoint} 调用失败")
 
     async def search(self, query: str) -> list[dict]:
-        raw = await self.call(self.settings.search_dir, "search_web", {"query": query, "max_results": 5})
+        query = query.strip()
+        if not 1 <= len(query) <= 128:
+            raise ValueError("搜索词长度必须为 1 到 128 个字符")
+        body = await self.request("search", {"query": query, "count": 5, "need_content": True})
+        raw_results = body.get("results")
+        if not isinstance(raw_results, list):
+            raise ProviderError("DeepSeek search 响应缺少 results")
         results = []
-        for block in re.split(r"\n\s*---\s*\n", raw):
-            match = re.search(r"URL:\s*(https?://\S+)", block)
-            if match:
-                title = re.sub(r"^\[\d+\]\s*", "", block.strip().splitlines()[0])
-                results.append({"title": title, "url": match.group(1), "snippet": block[-2000:]})
+        for item in raw_results:
+            if not isinstance(item, dict):
+                continue
+            title, url = item.get("title"), item.get("url")
+            if not isinstance(title, str) or not isinstance(url, str):
+                continue
+            results.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "snippet": item.get("snippet") or item.get("summary") or "",
+                    "content": item.get("content") if isinstance(item.get("content"), str) else "",
+                    "authority": item.get("authority"),
+                    "rerank_score": item.get("rerank_score"),
+                }
+            )
         return results
 
     async def fetch(self, url: str) -> str:
         await validate_public_url(url)
-        return await self.call(
-            self.settings.fetch_dir,
-            "fetch_web",
-            {
-                "url": url,
-                "prompt": "提取原始操作步骤、适用型号或条件、材料用量、风险与检查条件。不要补写原文没有的步骤。",
-                "format": "markdown",
-                "max_length": 18000,
-                "timeout": 25,
-            },
-        )
+        body = await self.request("fetch", {"url": url})
+        content = body.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ProviderError("DeepSeek fetch 没有返回可用正文")
+        return content
+
+    async def close(self) -> None:
+        await self.client.aclose()

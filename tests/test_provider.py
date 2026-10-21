@@ -144,3 +144,90 @@ async def test_provider_factory_selects_deepseek_and_requires_key():
     provider = create_vlm_provider(Settings(llm_provider="deepseek", deepseek_api_key="test-key"))
     assert isinstance(provider, DeepSeekSDKProvider)
     await provider.close()
+
+
+async def test_deepseek_search_uses_official_api_and_returns_content():
+    from along.providers.web import DeepSeekWebProvider
+
+    seen = []
+
+    def handle(request):
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "title": "X100 官方说明",
+                        "url": "https://example.com/x100",
+                        "snippet": "安装方向说明",
+                        "summary": "X100 的官方安装说明",
+                        "content": "# X100\n\n安装前断开电源。",
+                        "authority": 4,
+                        "rerank_score": 2.8,
+                    }
+                ]
+            },
+        )
+
+    provider = DeepSeekWebProvider(Settings(deepseek_api_key="search-key"))
+    await provider.client.aclose()
+    provider.client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    try:
+        results = await provider.search("X100 官方安装方向")
+    finally:
+        await provider.close()
+
+    assert seen[0].url == "https://api.deepseek.com/v1/tools/search"
+    assert seen[0].headers["authorization"] == "Bearer search-key"
+    assert json.loads(seen[0].content) == {
+        "query": "X100 官方安装方向",
+        "count": 5,
+        "need_content": True,
+    }
+    assert results[0]["content"] == "# X100\n\n安装前断开电源。"
+    assert results[0]["authority"] == 4
+
+
+async def test_deepseek_fetch_uses_official_api(monkeypatch):
+    from along.providers import web as web_module
+    from along.providers.web import DeepSeekWebProvider
+
+    checked = []
+
+    async def validate(url):
+        checked.append(url)
+        return url
+
+    monkeypatch.setattr(web_module, "validate_public_url", validate)
+
+    def handle(request):
+        assert request.url == "https://api.deepseek.com/v1/tools/fetch"
+        assert json.loads(request.content) == {"url": "https://example.com/manual"}
+        return httpx.Response(200, json={"title": "Manual", "content": "# Manual\n\nInstructions"})
+
+    provider = DeepSeekWebProvider(Settings(deepseek_api_key="search-key"))
+    await provider.client.aclose()
+    provider.client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    try:
+        content = await provider.fetch("https://example.com/manual")
+    finally:
+        await provider.close()
+
+    assert checked == ["https://example.com/manual"]
+    assert content == "# Manual\n\nInstructions"
+
+
+async def test_deepseek_search_requires_api_key():
+    from along.providers.web import DeepSeekWebProvider
+
+    provider = DeepSeekWebProvider(Settings(_env_file=None))
+    await provider.client.aclose()
+    provider.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: pytest.fail("request must not be sent"))
+    )
+    try:
+        with pytest.raises(ProviderError, match="ALONG_DEEPSEEK_API_KEY"):
+            await provider.search("test")
+    finally:
+        await provider.close()

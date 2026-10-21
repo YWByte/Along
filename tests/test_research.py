@@ -227,3 +227,27 @@ def test_ordinary_task_question_and_instant_question_do_not_search(app, client):
     assert ask(client, "现在桌面是什么状态？", task_id=task["id"]).status_code == 200
     assert ask(client, "这是什么", mode="instant").status_code == 200
     assert app.state.engine.web.searches == []
+
+
+def test_search_content_is_used_without_a_second_fetch(app, client):
+    async def search_with_content(query):
+        app.state.engine.web.searches.append(query)
+        return [
+            {
+                "title": "测试型号官方说明",
+                "url": "https://example.com/manual",
+                "content": "官方说明正文：按标记方向安装。",
+            }
+        ]
+
+    async def unexpected_fetch(url):
+        pytest.fail("Search 已返回正文时不应再次调用 Fetch")
+
+    app.state.engine.web.search = search_with_content
+    app.state.engine.web.fetch = unexpected_fetch
+    task = prepare(client, create(client)).json()
+
+    assert task["plan"]["basis"] == "references"
+    sources = app.state.store.rows("SELECT * FROM sources WHERE task_id=?", (task["id"],))
+    assert len(sources) == 1
+    assert "官方说明正文" in sources[0]["content"]

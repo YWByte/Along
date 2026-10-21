@@ -6,12 +6,13 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 from along.config import Settings
 from along.providers.vlm import CodexProxyProvider, ImageInput
-from along.providers.web import MCPWebProvider
+from along.providers.web import DeepSeekWebProvider
 
 
 async def main():
     settings = Settings()
     provider = CodexProxyProvider(settings)
+    web = DeepSeekWebProvider(settings)
     try:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "probe.jpg"
@@ -23,7 +24,6 @@ async def main():
             reply = await provider.text("描述左右两个图形的形状和颜色。", [ImageInput("probe", path)])
             print("VISION:", reply, flush=True)
             assert "红" in reply and "蓝" in reply, "Vision smoke assertion failed"
-        web = MCPWebProvider(settings)
         results = await web.search("BBC Good Food easy biscuits recipe")
         print("SEARCH:", results[:1], flush=True)
         assert results, "No search results"
@@ -32,6 +32,7 @@ async def main():
         print("PROBE PASS", flush=True)
     finally:
         await provider.close()
+        await web.close()
 
 
 if __name__ == "__main__":

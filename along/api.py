@@ -21,7 +21,7 @@ from along.engine import Engine
 from along.media import CapacityError, MediaStore
 from along.memory import Memory
 from along.providers.vlm import ProviderError, create_vlm_provider
-from along.providers.web import MCPWebProvider
+from along.providers.web import DeepSeekWebProvider
 from along.schemas import ChatInput, Mutation
 from along.speech import Speech
 from along.store import Conflict, Store
@@ -70,7 +70,8 @@ def create_app(settings: Settings | None = None, vlm=None, web=None):
     store = Store(settings.data_dir)
     media = MediaStore(store, settings)
     memory = Memory(store, media, provider, settings)
-    engine = Engine(store, memory, provider, web or MCPWebProvider(settings))
+    web_provider = web or DeepSeekWebProvider(settings)
+    engine = Engine(store, memory, provider, web_provider)
     speech = Speech(settings)
     token_path = settings.data_dir / "access-token"
     if not token_path.exists():
@@ -87,6 +88,9 @@ def create_app(settings: Settings | None = None, vlm=None, web=None):
         finally:
             await memory.close()
             await provider.close()
+            close_web = getattr(web_provider, "close", None)
+            if close_web:
+                await close_web()
             store.close()
 
     app = FastAPI(title="ALONG", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)

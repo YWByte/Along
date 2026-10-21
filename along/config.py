@@ -19,9 +19,6 @@ class Settings(BaseSettings):
     deepseek_api_key: SecretStr | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
-    search_dir: Path = Path("/Users/wondery/Work/search-web-mcp")
-    fetch_dir: Path = Path("/Users/wondery/Work/webfetch")
-    token_file: Path = Path("/Users/wondery/Work/tools/proxy/.env")
     port: int = 8766
     request_timeout: float = 90
     event_window: int = Field(default=10, ge=10, le=300)
