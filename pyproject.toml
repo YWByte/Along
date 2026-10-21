@@ -3,7 +3,7 @@ name = "along"
 version = "0.1.0"
 description = "Evidence-aware visual companion for hands-on tasks"
 requires-python = ">=3.12,<3.14"
-dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "httpx>=0.28,<1", "pydantic-settings>=2.8,<3", "python-multipart>=0.0.20", "pillow>=11,<13", "numpy>=2,<3", "mcp>=1.12,<2", "python-dotenv>=1,<2", "pypdf>=5,<7"]
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "httpx>=0.28,<1", "pydantic-settings>=2.8,<3", "python-multipart>=0.0.20", "pillow>=11,<13", "numpy>=2,<3", "mcp>=1.12,<2", "python-dotenv>=1,<2", "pypdf>=5,<7", "openai>=2.6,<3"]
 
 [project.optional-dependencies]
 # faster-whisper currently calls av.open(metadata_errors=...), removed in newer PyAV.

@@ -20,7 +20,7 @@ from along.config import Settings
 from along.engine import Engine
 from along.media import CapacityError, MediaStore
 from along.memory import Memory
-from along.providers.vlm import CodexProxyProvider, ProviderError
+from along.providers.vlm import ProviderError, create_vlm_provider
 from along.providers.web import MCPWebProvider
 from along.schemas import ChatInput, Mutation
 from along.speech import Speech
@@ -66,9 +66,9 @@ class BodyLimit:
 
 def create_app(settings: Settings | None = None, vlm=None, web=None):
     settings = settings or Settings()
+    provider = vlm or create_vlm_provider(settings)
     store = Store(settings.data_dir)
     media = MediaStore(store, settings)
-    provider = vlm or CodexProxyProvider(settings)
     memory = Memory(store, media, provider, settings)
     engine = Engine(store, memory, provider, web or MCPWebProvider(settings))
     speech = Speech(settings)

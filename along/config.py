@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,8 +13,12 @@ def default_data_dir() -> Path:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ALONG_", env_file=".env", extra="ignore")
     data_dir: Path = Field(default_factory=default_data_dir)
+    llm_provider: str = "codex_proxy"
     proxy_url: str = "http://127.0.0.1:8091/v1/responses"
     model: str = "deepseek-v4.1-flash"
+    deepseek_api_key: SecretStr | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-flash"
     search_dir: Path = Path("/Users/wondery/Work/search-web-mcp")
     fetch_dir: Path = Path("/Users/wondery/Work/webfetch")
     token_file: Path = Path("/Users/wondery/Work/tools/proxy/.env")
