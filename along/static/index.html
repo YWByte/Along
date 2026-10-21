@@ -5,76 +5,103 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>ALONG</title>
     <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/i18n.js" defer></script>
     <script src="/static/app.js" defer></script>
   </head>
   <body data-mode="home">
     <header class="bar">
-      <button id="back-home" class="ghost" aria-label="返回首页">←</button>
+      <button
+        id="back-home"
+        class="ghost"
+        aria-label="返回首页"
+        data-i18n-aria-label="返回首页"
+      >
+        ←
+      </button>
       <span class="brand">ALONG</span>
+      <button
+        id="language-toggle"
+        class="ghost language-toggle"
+        type="button"
+        aria-label="Switch to English"
+      >
+        EN
+      </button>
       <span id="mode-title" class="bar-mode"></span>
       <span id="stage" class="bar-stage"></span>
-      <span id="connection" class="status" title="连接状态">连接中</span>
-      <button id="open-menu" class="ghost" aria-label="任务菜单" hidden>
-        ⋯
-      </button>
+      <span
+        id="connection"
+        class="status"
+        title="连接状态"
+        data-i18n-title="连接状态"
+        ><span data-i18n="连接中">连接中</span></span
+      >
+      <div id="task-controls" class="task-controls" hidden>
+        <button id="pause-task" type="button" disabled>
+          <span data-i18n="暂停">暂停</span>
+        </button>
+        <button
+          id="open-menu"
+          type="button"
+          class="ghost"
+          aria-label="查看任务"
+          data-i18n-aria-label="查看任务"
+          aria-controls="drawer"
+          aria-expanded="false"
+        >
+          <span data-i18n="查看任务">查看任务</span>
+        </button>
+      </div>
     </header>
 
     <main>
       <section id="home" class="home">
-        <h1>今天想一起<br />做点什么？</h1>
-        <div class="mode-choices">
-          <button id="enter-task" class="mode-card" disabled>
-            <span class="mono">01</span><strong>一起做</strong
-            ><span>说出目标，我陪你一步步完成</span>
-          </button>
-          <button id="enter-instant" class="mode-card" disabled>
-            <span class="mono">02</span><strong>看一看</strong
-            ><span>拍下眼前的东西，直接问</span>
-          </button>
-        </div>
-      </section>
-
-      <section id="instant" class="instant" hidden>
-        <div id="instant-view-slot" class="instant-view">
-          <div id="viewfinder" class="viewfinder">
-            <video id="camera" autoplay muted playsinline></video>
-            <img id="uploaded-preview" alt="本次提问的照片" hidden />
-            <div id="camera-placeholder" role="status">正在打开相机…</div>
-            <button id="camera-toggle" class="chip on-dark" hidden>
-              开启相机
-            </button>
-            <button id="retake-photo" class="chip on-dark" hidden>重拍</button>
-            <span id="capture-status" class="rec" hidden>记录中</span>
-          </div>
-        </div>
-        <div class="instant-side">
-          <div id="instant-intro" class="instant-intro">
-            <p class="eyebrow">看一看</p>
-            <h2 id="instant-title">对准它，按下快门</h2>
-          </div>
-          <div id="instant-thread" class="thread-slot"></div>
-          <div class="shutter-row">
-            <button id="take-photo" class="shutter" aria-label="拍照"></button>
-          </div>
-          <div id="instant-composer-slot"></div>
-        </div>
+        <h1>
+          <span data-i18n="今天想一起">今天想一起</span><br /><span
+            data-i18n="做点什么？"
+            >做点什么？</span
+          >
+        </h1>
+        <p class="home-intro">
+          <span data-i18n="说出你想完成的事。一起动手，随时问我。"
+            >说出你想完成的事。一起动手，随时问我。</span
+          >
+        </p>
+        <button id="enter-task" class="primary big start-together" disabled>
+          <span data-i18n="我们开始吧">我们开始吧</span
+          ><span aria-hidden="true">↗</span>
+        </button>
+        <p class="home-note">
+          <span data-i18n="过程有记录，回答有依据。"
+            >过程有记录，回答有依据。</span
+          >
+        </p>
       </section>
 
       <section id="task" class="task" hidden>
         <div id="task-goal" class="pane center-pane" hidden>
-          <p class="eyebrow">一起做</p>
-          <h2 id="goal-title">想完成什么？</h2>
+          <p class="eyebrow"><span data-i18n="一起开始">一起开始</span></p>
+          <h2 id="goal-title">
+            <span data-i18n="想完成什么？">想完成什么？</span>
+          </h2>
           <p id="goal-hint" class="muted">
-            比如安装一个设备，或做一组放松动作。
+            <span data-i18n="告诉我你的目标，也可以把材料放在镜头前。"
+              >告诉我你的目标，也可以把材料放在镜头前。</span
+            >
           </p>
-          <div id="goal-examples" class="examples">
-            <button class="chip" data-example="连接蓝牙音箱">
-              连接蓝牙音箱</button
-            ><button class="chip" data-example="放松一下手腕">
-              放松一下手腕</button
-            ><button class="chip" data-example="安装一个墙面挂钩">
-              安装一个墙面挂钩
-            </button>
+          <div id="goal-view-slot" class="goal-view">
+            <div id="viewfinder" class="viewfinder">
+              <video id="camera" autoplay muted playsinline></video>
+              <div id="camera-placeholder" role="status">
+                <span data-i18n="正在打开相机…">正在打开相机…</span>
+              </div>
+              <button id="camera-toggle" class="chip on-dark" hidden>
+                <span data-i18n="开启相机">开启相机</span>
+              </button>
+              <span id="capture-status" class="rec" hidden
+                ><span data-i18n="记录中">记录中</span></span
+              >
+            </div>
           </div>
           <div id="goal-thread" class="thread-slot brief"></div>
           <div id="goal-composer-slot"></div>
@@ -86,12 +113,19 @@
             <h2 id="plan-title"></h2>
             <div id="plan-body"></div>
             <p id="record-consent" class="consent">
-              开始后，相机每秒记录一张画面，只保存在本机；你提问时，相关画面会发给模型分析。AI
-              的判断不等于安全认证。
+              <span
+                data-i18n="开始后，相机每秒记录一张画面，只保存在本机；你提问时，相关画面会发给模型分析；生成过程事件时也会发送帧拼图。AI 的判断不等于安全认证。"
+                >开始后，相机每秒记录一张画面，只保存在本机；你提问时，相关画面会发给模型分析；生成过程事件时也会发送帧拼图。AI
+                的判断不等于安全认证。</span
+              >
             </p>
             <div class="plan-actions">
-              <button id="confirm-plan" class="primary big">开始</button>
-              <button id="retry-plan" hidden>重新生成方案</button>
+              <button id="confirm-plan" class="primary big">
+                <span data-i18n="开始">开始</span>
+              </button>
+              <button id="retry-plan" hidden>
+                <span data-i18n="重新生成方案">重新生成方案</span>
+              </button>
             </div>
           </article>
           <div class="plan-adjust">
@@ -101,21 +135,34 @@
         </div>
 
         <div id="task-run" class="run" hidden>
-          <ol id="progress" class="progress" aria-label="步骤进度"></ol>
+          <ol
+            id="progress"
+            class="progress"
+            aria-label="步骤进度"
+            data-i18n-aria-label="步骤进度"
+          ></ol>
           <div class="run-main">
             <div id="task-content" class="step-view"></div>
             <aside id="pip-slot" class="pip"></aside>
           </div>
           <div id="answer" class="answer" hidden aria-live="polite"></div>
           <div id="paused-overlay" class="paused" hidden>
-            <p class="eyebrow">已暂停</p>
-            <p>暂停期间不记录画面。</p>
-            <button id="resume-task" class="primary big">继续</button>
+            <p class="eyebrow"><span data-i18n="已暂停">已暂停</span></p>
+            <p>
+              <span data-i18n="暂停期间不记录画面。">暂停期间不记录画面。</span>
+            </p>
+            <button id="resume-task" class="primary big">
+              <span data-i18n="继续">继续</span>
+            </button>
           </div>
           <div class="dock">
-            <button id="prev-step" class="ghost">← 上一步</button>
+            <button id="prev-step" class="ghost">
+              <span data-i18n="← 上一步">← 上一步</span>
+            </button>
             <div id="run-composer-slot" class="dock-center"></div>
-            <button id="next-step" class="primary">下一步 →</button>
+            <button id="next-step" class="primary">
+              <span data-i18n="下一步 →">下一步 →</span>
+            </button>
           </div>
         </div>
       </section>
@@ -123,18 +170,35 @@
 
     <form id="chat-form" class="composer">
       <div class="composer-row">
-        <button type="button" id="mic" class="mic" aria-label="按住说话">
-          <span class="mic-dot"></span><span id="mic-label">按住说话</span>
+        <button
+          type="button"
+          id="mic"
+          class="mic"
+          aria-label="按住说话"
+          data-i18n-aria-label="按住说话"
+        >
+          <span class="mic-dot"></span
+          ><span id="mic-label"
+            ><span data-i18n="按住说话">按住说话</span></span
+          >
         </button>
         <textarea
           id="question"
           rows="1"
           maxlength="4000"
           placeholder="或者打字…"
+          data-i18n-placeholder="或者打字…"
           aria-label="问题或任务目标"
+          data-i18n-aria-label="问题或任务目标"
           required
         ></textarea>
-        <button type="submit" id="send" class="send" aria-label="发送">
+        <button
+          type="submit"
+          id="send"
+          class="send"
+          aria-label="发送"
+          data-i18n-aria-label="发送"
+        >
           ↑
         </button>
       </div>
@@ -142,67 +206,109 @@
     </form>
 
     <div id="drawer" class="drawer" hidden>
-      <div class="drawer-panel" role="dialog" aria-label="任务菜单">
+      <div
+        class="drawer-panel"
+        role="dialog"
+        aria-label="任务菜单"
+        data-i18n-aria-label="任务菜单"
+      >
         <div class="drawer-head">
-          <strong>任务</strong>
-          <button id="close-menu" class="ghost" aria-label="关闭">✕</button>
+          <strong><span data-i18n="任务">任务</span></strong>
+          <button
+            id="close-menu"
+            class="ghost"
+            aria-label="关闭"
+            data-i18n-aria-label="关闭"
+          >
+            ✕
+          </button>
         </div>
-        <div class="drawer-actions">
-          <button id="pause-task">暂停</button>
-          <button id="finish-task" class="danger">结束任务</button>
+        <p id="drawer-empty" class="drawer-empty" hidden>
+          <strong data-i18n="尚未开始任务">尚未开始任务</strong>
+          <span data-i18n="先告诉我具体目标，确认方案后开始。"
+            >先告诉我具体目标，确认方案后开始。</span
+          >
+        </p>
+        <div class="drawer-actions" data-requires-task>
+          <button id="finish-task" class="danger">
+            <span data-i18n="结束任务">结束任务</span>
+          </button>
         </div>
         <details open>
-          <summary>对话</summary>
+          <summary><span data-i18n="对话">对话</span></summary>
           <div id="drawer-thread" class="thread-slot"></div>
         </details>
-        <details>
-          <summary>完整方案</summary>
+        <details data-requires-task>
+          <summary><span data-i18n="完整方案">完整方案</span></summary>
           <div id="plan-outline"></div>
         </details>
-        <details>
-          <summary>建议与待确认</summary>
+        <details data-requires-task>
+          <summary><span data-i18n="建议与待确认">建议与待确认</span></summary>
           <div id="followups"></div>
         </details>
-        <details>
-          <summary>补充资料、调整方案</summary>
+        <details data-requires-task>
+          <summary>
+            <span data-i18n="补充资料、调整方案">补充资料、调整方案</span>
+          </summary>
           <form id="prepare-form" class="stack">
             <input
               id="source-url"
               type="url"
               placeholder="说明书或教程网址（可选）"
+              data-i18n-placeholder="说明书或教程网址（可选）"
               aria-label="资料网址"
+              data-i18n-aria-label="资料网址"
             /><input
               id="revision-reason"
               maxlength="2000"
               placeholder="需要调整什么"
+              data-i18n-placeholder="需要调整什么"
               aria-label="调整原因"
-            /><button>重新生成方案</button>
+              data-i18n-aria-label="调整原因"
+            /><button>
+              <span data-i18n="重新生成方案">重新生成方案</span>
+            </button>
           </form>
           <label class="file-button"
-            >导入说明书（PDF / TXT / MD）<input
+            ><span data-i18n="导入说明书（PDF / TXT / MD）"
+              >导入说明书（PDF / TXT / MD）</span
+            ><input
               id="source-file"
               type="file"
               accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
               hidden
           /></label>
-          <p class="muted">调整需先暂停，新方案要重新开始。</p>
+          <p class="muted">
+            <span data-i18n="调整需先暂停，新方案要重新开始。"
+              >调整需先暂停，新方案要重新开始。</span
+            >
+          </p>
         </details>
         <details>
-          <summary>过程记录</summary>
+          <summary><span data-i18n="过程记录">过程记录</span></summary>
           <div class="stack">
-            <select id="history-task" aria-label="历史任务"></select>
+            <select
+              id="history-task"
+              aria-label="历史任务"
+              data-i18n-aria-label="历史任务"
+            ></select>
             <div class="row">
-              <button id="timeline-refresh">查看记录</button
-              ><button id="delete-task" class="danger">删除所选任务</button>
+              <button id="timeline-refresh">
+                <span data-i18n="查看记录">查看记录</span></button
+              ><button id="delete-task" class="danger">
+                <span data-i18n="删除所选任务">删除所选任务</span>
+              </button>
             </div>
           </div>
           <div id="timeline"></div>
         </details>
         <details>
-          <summary>运行状态</summary>
+          <summary><span data-i18n="运行状态">运行状态</span></summary>
           <p id="queue-status" class="muted"></p>
           <p id="diagnostics" class="muted"></p>
-          <button id="retry-jobs">重试失败的记录整理</button>
+          <button id="retry-jobs">
+            <span data-i18n="重试失败的记录整理">重试失败的记录整理</span>
+          </button>
         </details>
       </div>
     </div>
@@ -210,7 +316,14 @@
     <div id="messages" class="thread"></div>
     <div id="toast" role="alert" hidden></div>
     <dialog id="evidence-dialog">
-      <button id="close-dialog" class="ghost" aria-label="关闭">✕</button>
+      <button
+        id="close-dialog"
+        class="ghost"
+        aria-label="关闭"
+        data-i18n-aria-label="关闭"
+      >
+        ✕
+      </button>
       <div id="evidence-content"></div>
     </dialog>
   </body>

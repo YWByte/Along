@@ -31,7 +31,7 @@ class MediaStore:
         kind="frame",
         origin="camera",
     ):
-        if origin not in ("camera", "upload", "replay"):
+        if origin not in ("camera", "upload", "replay", "reference"):
             raise ValueError("无效媒体来源")
         if not math.isfinite(captured) or abs(captured - time.time()) > 86400:
             raise ValueError("采集时间无效或与服务端相差超过一天")
@@ -47,9 +47,13 @@ class MediaStore:
             ):
                 raise Conflict("媒体 ID 已存在但内容或所属会话不一致")
             return existing
+        if origin == "reference" and (kind != "frame" or not task_id):
+            raise ValueError("参考图必须是任务内图片")
         if task_id:
             task = self.store.task(task_id)
-            if task["status"] != "active":
+            if origin == "reference" and task["status"] not in ("draft", "paused"):
+                raise Conflict("参考图仅用于任务准备，不属于执行记录")
+            if origin != "reference" and task["status"] != "active":
                 transitions = self.store.rows(
                     "SELECT kind,created FROM ledger WHERE task_id=? "
                     "AND kind IN ('confirm_plan','resume','pause','finish') ORDER BY created",

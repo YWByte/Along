@@ -19,10 +19,28 @@ from along.config import Settings
 from test_flows import ask, change, start, upload
 
 
+def unconfirmed_harness(app, task):
+    return app.state.store.change(
+        task["id"],
+        task["version"],
+        lambda row, state, plan, db: (
+            row["status"],
+            {**state, "plan_confirmed": False},
+            plan,
+            "test_unconfirmed_harness",
+            {},
+        ),
+    )
+
+
 @pytest.mark.parametrize("scene", ["installation", "exercise"])
 def test_preparation_persists_scene_and_loads_skill(app, client, scene):
     app.state.engine.vlm.research_decision = ResearchDecision(
-        action="direct", reason="常见操作", scenario=scene
+        action="direct",
+        reason="常见操作",
+        scenario=scene,
+        device_model="Demo device A1",
+        model_evidence="user",
     )
     task = start(client)
     response = client.post(f"/api/tasks/{task['id']}/prepare", json={})
@@ -32,9 +50,14 @@ def test_preparation_persists_scene_and_loads_skill(app, client, scene):
 
 def scene_route(original, scene, focus):
     async def respond(prompt, schema, images=None):
-        if schema is Route:
+        if issubclass(schema, Route):
             return Route(
-                intent="ask", related_to_task=True, needs_history=True, scenario=scene, review_focus=focus
+                intent="ask",
+                related_to_task=True,
+                needs_history=True,
+                scenario=scene,
+                review_focus=focus,
+                review_kind="motion",
             )
         if schema is AnswerAudit:
             return AnswerAudit(action="keep")
@@ -50,11 +73,16 @@ def scene_route(original, scene, focus):
     return respond
 
 
-def test_review_isolated_and_focus_persists_without_completing_step(app, client):
+def test_unconfirmed_review_isolated_and_focus_persists_without_completing_step(app, client):
     app.state.engine.vlm.research_decision = ResearchDecision(
-        action="direct", reason="普通设备", scenario="installation"
+        action="direct",
+        reason="普通设备",
+        scenario="installation",
+        device_model="Demo device A1",
+        model_evidence="user",
     )
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     for _ in range(8):
         upload(client, task)
     focus = ReviewFocus(subject="连接件的方向", step_id="s1", plan_revision=1)
@@ -100,8 +128,9 @@ async def test_observation_rejects_fabricated_duplicate_or_reverse_evidence(bad_
         )
 
 
-def test_window_replacement_keeps_audit_and_allows_old_evidence(app, client):
+def test_unconfirmed_window_replacement_keeps_audit_and_allows_old_evidence(app, client):
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     for _ in range(16):
         upload(client, task)
     original = app.state.engine.vlm.structured
@@ -129,11 +158,12 @@ def test_window_replacement_keeps_audit_and_allows_old_evidence(app, client):
     assert len(result.json()["retrieval"]["tools"]) == 2
 
 
-def test_unusable_observation_cannot_publish_negative_verdict(app, client):
+def test_unconfirmed_unusable_observation_cannot_publish_negative_verdict(app, client):
     app.state.engine.vlm.research_decision = ResearchDecision(
         action="direct", reason="普通放松", scenario="exercise"
     )
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     for _ in range(4):
         upload(client, task)
     original = scene_route(app.state.engine.vlm.structured, "exercise", ReviewFocus(subject="肩部活动"))
@@ -168,17 +198,22 @@ async def test_provider_rejects_silent_image_truncation():
         await p.close()
 
 
-def test_audit_removes_unsupported_advice_and_records_correction(app, client):
+def test_unconfirmed_audit_removes_unsupported_advice_and_records_correction(app, client):
     app.state.engine.vlm.research_decision = ResearchDecision(
-        action="direct", reason="普通设备", scenario="installation"
+        action="direct",
+        reason="普通设备",
+        scenario="installation",
+        device_model="Demo device A1",
+        model_evidence="user",
     )
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     frame = upload(client, task)
     original = app.state.engine.vlm.structured
 
     async def respond(prompt, schema, images=None):
         if issubclass(schema, Answer):
-            return Answer(reply="已经接牢，可以安全使用", suggestion="立刻通电")
+            return Answer(reply="已经接牢，可以安全使用", suggestion="立刻通电", evidence_conflict=True)
         if schema is AnswerAudit:
             return AnswerAudit(
                 action="revise",
@@ -221,13 +256,14 @@ async def test_event_open_respects_explicit_subrange_and_before_time(app):
     assert result["selected_gap_seconds"] == 1
 
 
-def test_route_receives_completed_anchor_and_prior_focus(app, client):
+def test_unconfirmed_route_receives_completed_anchor_and_prior_focus(app, client):
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     task = change(client, task, "step", target="s1", value="user_reported_done").json()
     original = app.state.engine.vlm.structured
 
     async def respond(prompt, schema, images=None):
-        if schema is Route:
+        if issubclass(schema, Route):
             context = json.loads(prompt.split("\n")[-1])
             assert context["anchors"]["last_user_completed_step"]["step_id"] == "s1"
             assert "previous_review_focus" in context["task"]
@@ -266,7 +302,11 @@ def test_revised_plan_is_validated_before_adoption(app, client):
     from along.schemas import PlanAudit, PlanDraft, Step
 
     app.state.engine.vlm.research_decision = ResearchDecision(
-        action="direct", reason="设备使用", scenario="installation"
+        action="direct",
+        reason="设备使用",
+        scenario="installation",
+        device_model="Demo device A1",
+        model_evidence="user",
     )
     original = app.state.engine.vlm.structured
 
@@ -290,8 +330,9 @@ def test_revised_plan_is_validated_before_adoption(app, client):
     assert app.state.store.task(task["id"])["plan"] is None
 
 
-def test_in_task_stop_does_not_create_suggestion(app, client):
+def test_unconfirmed_in_task_stop_does_not_create_suggestion(app, client):
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     original = app.state.engine.vlm.structured
 
     async def respond(prompt, schema, images=None):
@@ -464,10 +505,11 @@ def test_older_override_requires_reason():
         MemoryCall(tool="current", allow_older=True, reason="test")
 
 
-def test_process_planning_uses_required_tool_schema_without_current_snapshot(app, client):
+def test_unconfirmed_process_planning_uses_required_tool_schema_even_with_current_snapshot(app, client):
     from along.schemas import MemoryRequest
 
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     frames = [upload(client, task) for _ in range(4)]
     original = app.state.engine.vlm.structured
     calls = 0

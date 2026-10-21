@@ -63,7 +63,7 @@ class Memory:
             ):
                 continue
             frames = self.store.rows(
-                "SELECT * FROM media WHERE task_id=? AND kind='frame' AND indexed=0 "
+                "SELECT * FROM media WHERE task_id=? AND kind='frame' AND origin!='reference' AND indexed=0 "
                 "AND expired=0 ORDER BY captured,seq",
                 (task["id"],),
             )
@@ -115,7 +115,9 @@ class Memory:
         try:
             row, path = self.media.path(frame_id)
             label = (
-                "用户上传图片，实际拍摄时间未知"
+                "任务准备参考图，不是执行过程证据"
+                if row["origin"] == "reference"
+                else "用户上传图片，实际拍摄时间未知"
                 if row["origin"] == "upload"
                 else ("录像回放，不是实时现场" if row["origin"] == "replay" else "相机采集")
             )
@@ -461,7 +463,7 @@ class Memory:
 
     def recent_images(self, task_id, limit):
         rows = self.store.rows(
-            "SELECT id FROM media WHERE task_id=? AND kind='frame' AND expired=0 "
+            "SELECT id FROM media WHERE task_id=? AND kind='frame' AND origin!='reference' AND expired=0 "
             "ORDER BY captured DESC,seq DESC LIMIT ?",
             (task_id, limit),
         )

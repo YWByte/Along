@@ -1247,3 +1247,312 @@ dialog pre {
     --dock-h: 150px;
   }
 }
+
+/* A single, scenario-neutral entry. */
+.home {
+  max-width: 760px;
+}
+.home-intro {
+  margin-top: 24px;
+  color: var(--ink-2);
+  font-size: 18px;
+  line-height: 1.7;
+}
+.start-together {
+  margin-top: 40px;
+  min-width: 240px;
+  display: inline-flex;
+  justify-content: space-between;
+  gap: 40px;
+}
+.home-note {
+  margin-top: 22px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.goal-view {
+  width: min(100%, 440px);
+  margin: 24px auto;
+}
+.goal-view .viewfinder {
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 16 / 9;
+  border-radius: 20px;
+}
+.connection-table {
+  overflow-x: auto;
+  margin: 16px 0;
+}
+.connection-table table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 14px;
+}
+.connection-table th,
+.connection-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.connection-table th {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.language-toggle {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 5px 10px;
+  flex-shrink: 0;
+}
+html[lang="en-GB"] .home h1 {
+  font-size: clamp(40px, 6vw, 76px);
+  line-height: 1.1;
+}
+html[lang="en-GB"] .dock .primary,
+html[lang="en-GB"] .dock .ghost {
+  white-space: nowrap;
+}
+
+/* Keep desktop demonstrations readable without changing the mobile layout. */
+@media (min-width: 901px) {
+  :root {
+    --dock-h: 112px;
+  }
+  body {
+    font-size: 19px;
+  }
+  main {
+    width: 78%;
+    max-width: none;
+    padding: 16px 0 48px;
+  }
+  .bar {
+    height: 68px;
+    padding-inline: 11%;
+  }
+  .brand {
+    font-size: 18px;
+  }
+  .bar-stage,
+  .status,
+  .language-toggle {
+    font-size: 15px;
+  }
+  button,
+  .file-button {
+    font-size: 18px;
+    padding: 12px 22px;
+  }
+  .primary.big {
+    font-size: 21px;
+    padding: 18px 44px;
+  }
+  .home,
+  .center-pane,
+  .plan-pane {
+    max-width: none;
+    width: 100%;
+  }
+  .home {
+    min-height: 72vh;
+    margin-top: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+  }
+  .home h1,
+  html[lang="en-GB"] .home h1 {
+    font-size: clamp(64px, 6vw, 112px);
+  }
+  .home-intro {
+    font-size: clamp(22px, 1.6vw, 28px);
+  }
+  .home-note,
+  .muted,
+  .warning {
+    font-size: 17px;
+  }
+  .start-together {
+    min-width: 300px;
+  }
+  .center-pane {
+    margin-top: 4vh;
+  }
+  .center-pane h2,
+  .plan-card h2 {
+    font-size: clamp(36px, 3vw, 56px);
+  }
+  .goal-view {
+    width: min(60%, 640px);
+    margin: 28px 0;
+  }
+  .plan-card {
+    padding: 40px 48px;
+  }
+  .plan-steps p,
+  .notes li,
+  .connection-table table,
+  .thread article {
+    font-size: 18px;
+  }
+  .label,
+  .eyebrow,
+  .consent,
+  .plan-steps li::before {
+    font-size: 15px;
+  }
+  .run-main {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 32%);
+    gap: clamp(28px, 3vw, 64px);
+    margin-top: 5vh;
+  }
+  .current-step h2 {
+    font-size: clamp(48px, 4.5vw, 86px);
+  }
+  .current-step .instruction {
+    font-size: clamp(22px, 1.7vw, 30px);
+  }
+  .current-step .ticks li {
+    font-size: 20px;
+  }
+  .current-step .count {
+    font-size: 18px;
+  }
+  .pip {
+    top: 88px;
+  }
+  .paused {
+    top: 68px;
+  }
+  .dock {
+    left: 11%;
+    right: 11%;
+    padding-inline: 0;
+    gap: 20px;
+  }
+  .dock-center {
+    max-width: 1000px;
+    min-width: 0;
+  }
+  .mic,
+  .send {
+    height: 56px;
+  }
+  .send {
+    width: 56px;
+    flex-shrink: 0;
+    font-size: 24px;
+  }
+  .composer textarea {
+    min-width: 0;
+    min-height: 56px;
+    padding-block: 13px;
+  }
+  #next-step {
+    font-size: 18px;
+    padding: 17px 24px;
+  }
+  #prev-step,
+  #next-step {
+    flex-shrink: 0;
+  }
+  .answer {
+    width: min(1000px, 78vw);
+    padding: 24px 30px;
+  }
+  .answer .headline {
+    font-size: 26px;
+  }
+  .answer.compact .headline {
+    font-size: 22px;
+  }
+  .answer .detail,
+  .answer .checks,
+  .answer .criteria,
+  .thread .headline {
+    font-size: 18px;
+  }
+  .answer .verdict,
+  .thread .verdict,
+  .drawer summary {
+    font-size: 16px;
+  }
+  .drawer-panel {
+    width: clamp(440px, 36vw, 660px);
+    padding: 24px 30px 40px;
+  }
+  #toast {
+    top: 80px;
+    font-size: 18px;
+  }
+}
+
+.task-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.task-controls button,
+.task-controls #open-menu {
+  font-size: 14px;
+  padding: 7px 14px;
+  white-space: nowrap;
+}
+.task-controls #open-menu {
+  width: auto;
+  height: auto;
+  min-height: 36px;
+  line-height: 1.4;
+  border: 1px solid var(--line);
+}
+.drawer-empty {
+  display: grid;
+  gap: 8px;
+  padding: 18px 0;
+  color: var(--ink-2);
+}
+.drawer-empty strong {
+  color: var(--ink);
+}
+@media (min-width: 901px) {
+  .task-controls button,
+  .task-controls #open-menu {
+    font-size: 16px;
+  }
+  .bar-stage {
+    min-width: 0;
+    flex: 1;
+  }
+}
+@media (max-width: 900px) {
+  body[data-mode="task"] .bar {
+    flex-wrap: wrap;
+    min-height: 104px;
+    height: auto;
+    padding-block: 8px;
+    gap: 8px;
+  }
+  .task-controls {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
+  body[data-mode="task"] .pip {
+    top: 120px;
+  }
+  body[data-mode="task"] .paused {
+    top: 104px;
+  }
+}
+@media (max-width: 560px) {
+  .bar-mode {
+    display: none;
+  }
+  .bar-stage {
+    font-size: 12px;
+    min-width: 0;
+  }
+}

@@ -12,6 +12,20 @@ from test_flows import ask, change, start, upload
 from test_store import image_bytes
 
 
+def unconfirmed_harness(app, task):
+    return app.state.store.change(
+        task["id"],
+        task["version"],
+        lambda row, state, plan, db: (
+            row["status"],
+            {**state, "plan_confirmed": False},
+            plan,
+            "test_unconfirmed_harness",
+            {},
+        ),
+    )
+
+
 def active_frames(app, count=34):
     store = app.state.store
     task = store.create_task("日常活动手腕")
@@ -46,7 +60,7 @@ def test_defaults_one_frame_per_second():
     assert settings.frame_interval == 1
     assert settings.event_frames == 10 and settings.event_overlap_frames == 2
     assert settings.clip_frames == 8 and settings.max_images == 12
-    assert settings.memory_rounds == 3
+    assert settings.memory_rounds == 2
 
 
 async def test_unindexed_recent_clip_is_ordered_and_bounded(app):
@@ -177,8 +191,9 @@ def test_migration_backfills_metadata_and_search(app, client, tmp_path):
         restored.close()
 
 
-def test_agent_reads_sequence_despite_route_without_history(app, client):
+def test_unconfirmed_agent_reads_sequence_despite_route_without_history(app, client):
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     frames = [upload(client, task) for _ in range(9)]
     provider = app.state.engine.vlm
     original = provider.structured
@@ -206,8 +221,9 @@ def test_agent_reads_sequence_despite_route_without_history(app, client):
     assert not app.state.store.task(task["id"])["state"]["open_issues"]
 
 
-def test_agent_three_round_limit_and_duplicate_detection(app, client):
+def test_unconfirmed_agent_two_round_limit_and_duplicate_detection(app, client):
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     upload(client, task)
     original = app.state.engine.vlm.structured
 
@@ -218,7 +234,7 @@ def test_agent_three_round_limit_and_duplicate_detection(app, client):
 
     app.state.engine.vlm.structured = respond
     result = ask(client, "过程如何", task_id=task["id"]).json()
-    assert len(result["retrieval"]["tools"]) == 3
+    assert len(result["retrieval"]["tools"]) == 2
     assert "已执行同一查询" in result["retrieval"]["tools"][1]["result"]["error"]
     assert result["warnings"] and not result["evidence_ids"]
 
@@ -276,8 +292,9 @@ def test_tool_argument_validation(values):
         MemoryCall(**values)
 
 
-def test_agent_search_then_open_rechecks_raw_images(app, client):
+def test_unconfirmed_agent_search_then_open_rechecks_raw_images(app, client):
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     frames = [upload(client, task) for _ in range(10)]
     event(app.state.store, task["id"], "target", frames, "手腕侧偏")
     original = app.state.engine.vlm.structured
@@ -303,10 +320,11 @@ def test_agent_search_then_open_rechecks_raw_images(app, client):
     assert not result["missing"]
 
 
-def test_memory_and_web_budgets_are_independent(app, client):
+def test_unconfirmed_memory_and_web_budgets_are_independent(app, client):
     from along.schemas import ResearchDecision
 
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     upload(client, task)
     original = app.state.engine.vlm.structured
     responses = 0
@@ -341,8 +359,9 @@ def test_memory_and_web_budgets_are_independent(app, client):
     assert result["source_ids"]
 
 
-def test_concurrent_task_change_rejects_memory_answer(app, client):
+def test_unconfirmed_concurrent_task_change_rejects_memory_answer(app, client):
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     upload(client, task)
     original = app.state.engine.vlm.structured
     responses = 0
@@ -391,8 +410,9 @@ async def test_future_frames_and_unknown_old_step_are_not_relabelled(app):
     assert not images and result["error"]
 
 
-def test_process_answer_must_not_confuse_unread_memory_with_missing_evidence(app, client):
+def test_unconfirmed_process_answer_must_not_confuse_unread_memory_with_missing_evidence(app, client):
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     frames = [upload(client, task) for _ in range(8)]
     original = app.state.engine.vlm.structured
     responses = 0
@@ -418,8 +438,9 @@ def test_process_answer_must_not_confuse_unread_memory_with_missing_evidence(app
     assert "单帧不能" not in response.json()["reply"]
 
 
-def test_ignored_evidence_feedback_never_publishes_premature_evaluation(app, client):
+def test_unconfirmed_ignored_evidence_feedback_never_publishes_premature_evaluation(app, client):
     task = change(client, start(client), "confirm_plan").json()
+    task = unconfirmed_harness(app, task)
     for _ in range(3):
         upload(client, task)
     original = app.state.engine.vlm.structured

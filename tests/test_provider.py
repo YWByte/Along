@@ -128,6 +128,7 @@ async def test_deepseek_sdk_sends_text_and_images(tmp_path):
 
     assert result == "看到了"
     assert completions.kwargs["model"] == "deepseek-flash"
+    assert completions.kwargs["reasoning_effort"] == "low"
     content = completions.kwargs["messages"][1]["content"]
     assert content[1]["text"].startswith("证据图片 ID=frame_1")
     assert content[2]["image_url"]["url"].startswith("data:image/jpeg;base64,")
@@ -231,3 +232,26 @@ async def test_deepseek_search_requires_api_key():
             await provider.search("test")
     finally:
         await provider.close()
+
+
+async def test_deepseek_truncated_output_is_explicit_failure():
+    from types import SimpleNamespace
+    from along.providers.vlm import DeepSeekSDKProvider
+
+    provider = DeepSeekSDKProvider(
+        Settings(_env_file=None, deepseek_api_key="test-key", deepseek_max_tokens=8192)
+    )
+    await provider.client.close()
+
+    class Completions:
+        async def create(self, **kwargs):
+            assert kwargs["max_tokens"] == 8192
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(finish_reason="length", message=SimpleNamespace(content='{"partial":'))
+                ]
+            )
+
+    provider.client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    with pytest.raises(ProviderError, match="输出被截断"):
+        await provider.text("生成完整方案")

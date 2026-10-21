@@ -7,7 +7,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 
-def contact_sheet(paths, times, target: Path, columns=6, tile_width=320, label=True):
+def contact_sheet(paths, times, target: Path, columns=4, tile_width=480, label=True):
     """Tiles are read left-to-right, top-to-bottom; each carries its offset from the first frame."""
     if not paths:
         raise ValueError("拼图至少需要一张图片")

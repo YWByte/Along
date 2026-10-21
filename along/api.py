@@ -15,9 +15,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from along.config import Settings
 from along.engine import Engine
+from along.i18n import localize_error, use_language
 from along.media import CapacityError, MediaStore
 from along.memory import Memory
 from along.providers.vlm import ProviderError, create_vlm_provider
@@ -35,6 +37,7 @@ class Goal(BaseModel):
 
 
 class PrepareInput(BaseModel):
+    frame_id: str | None = Field(default=None, max_length=100)
     url: str | None = Field(default=None, max_length=2000)
     reason: str = Field(default="", max_length=2000)
 
@@ -101,48 +104,58 @@ def create_app(settings: Settings | None = None, vlm=None, web=None):
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
-        if request.url.path.startswith("/api/"):
-            supplied = request.headers.get("x-along-token", "")
-            if not secrets.compare_digest(supplied, token):
-                return JSONResponse({"detail": "缺少本地访问令牌，请从 ALONG 页面进入"}, status_code=403)
-        response = await call_next(request)
-        response.headers["Cache-Control"] = "no-store"
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'"
-        )
-        return response
+        with use_language(request.headers.get("x-along-language")):
+            if request.url.path.startswith("/api/"):
+                supplied = request.headers.get("x-along-token", "")
+                if not secrets.compare_digest(supplied, token):
+                    return JSONResponse(
+                        {"detail": localize_error("缺少本地访问令牌，请从 ALONG 页面进入")}, status_code=403
+                    )
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                "img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'"
+            )
+            return response
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request, exc):
+        detail = localize_error(exc.detail) if isinstance(exc.detail, str) else exc.detail
+        return JSONResponse({"detail": detail}, status_code=exc.status_code, headers=exc.headers)
 
     @app.exception_handler(Conflict)
     async def conflict(request, exc):
-        return JSONResponse({"detail": str(exc)}, status_code=409)
+        return JSONResponse({"detail": localize_error(str(exc))}, status_code=409)
 
     @app.exception_handler(KeyError)
     async def not_found(request, exc):
-        return JSONResponse({"detail": str(exc).strip("'")}, status_code=404)
+        return JSONResponse({"detail": localize_error(str(exc).strip("'"))}, status_code=404)
 
     @app.exception_handler(CapacityError)
     async def capacity(request, exc):
-        return JSONResponse({"detail": str(exc)}, status_code=507)
+        return JSONResponse({"detail": localize_error(str(exc))}, status_code=507)
 
     @app.exception_handler(ValueError)
     async def invalid(request, exc):
-        return JSONResponse({"detail": str(exc)}, status_code=422)
+        return JSONResponse({"detail": localize_error(str(exc))}, status_code=422)
 
     @app.exception_handler(ProviderError)
     async def provider_error(request, exc):
-        return JSONResponse({"detail": str(exc)}, status_code=502)
+        return JSONResponse({"detail": localize_error(str(exc))}, status_code=502)
 
     @app.exception_handler(sqlite3.IntegrityError)
     async def integrity(request, exc):
-        return JSONResponse({"detail": "记录冲突，请刷新；原始记录未被覆盖"}, status_code=409)
+        return JSONResponse({"detail": localize_error("记录冲突，请刷新；原始记录未被覆盖")}, status_code=409)
 
     @app.exception_handler(OSError)
     async def io_error(request, exc):
         log.error("storage or device IO failed type=%s", type(exc).__name__)
-        return JSONResponse({"detail": "本地存储或设备读写失败，请检查磁盘和权限"}, status_code=503)
+        return JSONResponse(
+            {"detail": localize_error("本地存储或设备读写失败，请检查磁盘和权限")}, status_code=503
+        )
 
     @app.get("/")
     async def index():
@@ -183,7 +196,8 @@ def create_app(settings: Settings | None = None, vlm=None, web=None):
     @app.exception_handler(TimeoutError)
     async def timeout(request, exc):
         return JSONResponse(
-            {"detail": "操作超过时限，未完成的结果没有被当作成功；请查看任务状态后重试"}, status_code=504
+            {"detail": localize_error("操作超过时限，未完成的结果没有被当作成功；请查看任务状态后重试")},
+            status_code=504,
         )
 
     @app.post("/api/tasks")
@@ -202,7 +216,7 @@ def create_app(settings: Settings | None = None, vlm=None, web=None):
             memory.user_busy = True
             try:
                 async with asyncio.timeout(240):
-                    return await engine.prepare(task_id, body.url, body.reason)
+                    return await engine.prepare(task_id, body.url, body.reason, body.frame_id)
             finally:
                 memory.user_busy = False
 
@@ -328,7 +342,7 @@ def create_app(settings: Settings | None = None, vlm=None, web=None):
         seq: Annotated[int, Form(ge=0)],
         task_id: Annotated[str | None, Form()] = None,
         kind: Annotated[str, Form(pattern="^(frame|clip)$")] = "frame",
-        origin: Annotated[str, Form(pattern="^(camera|upload|replay)$")] = "camera",
+        origin: Annotated[str, Form(pattern="^(camera|upload|replay|reference)$")] = "camera",
     ):
         raw = await file.read(33 * 1024 * 1024)
         return media.save(media_id, raw, task_id or None, conversation_id, captured, seq, kind, origin)
@@ -353,7 +367,12 @@ def create_app(settings: Settings | None = None, vlm=None, web=None):
     @app.post("/api/speech")
     async def transcribe(file: Annotated[UploadFile, File()]):
         raw = await file.read(12 * 1024 * 1024 + 1)
-        return {"text": await speech.transcribe(raw)}
+        try:
+            return {"text": await speech.transcribe(
+                raw, file.filename or "voice.webm", file.content_type or "application/octet-stream"
+            )}
+        finally:
+            await file.close()
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app

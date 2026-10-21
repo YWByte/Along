@@ -24,12 +24,22 @@ class Step(BaseModel):
     source_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
+class Connection(BaseModel):
+    id: str = Field(min_length=1, max_length=60)
+    step_id: str = Field(min_length=1, max_length=60)
+    from_pin: str = Field(min_length=1, max_length=200)
+    to_pin: str = Field(min_length=1, max_length=200)
+    wire_color: str = Field(default="", max_length=60)
+    source_ids: list[str] = Field(default_factory=list, max_length=10)
+
+
 class PlanDraft(BaseModel):
     title: str = Field(max_length=300)
     prerequisites: list[str] = Field(default_factory=list, max_length=15)
     steps: list[Step] = Field(min_length=1, max_length=30)
     cautions: list[str] = Field(default_factory=list, max_length=15)
     questions: list[str] = Field(default_factory=list, max_length=1)
+    connections: list[Connection] = Field(default_factory=list, max_length=30)
 
 
 class PlanAudit(BaseModel):
@@ -44,7 +54,7 @@ class PlanAudit(BaseModel):
         return self
 
 
-Scenario = Literal["installation", "exercise", "general"]
+Scenario = Literal["installation", "exercise", "wiring", "general"]
 
 
 class ReviewFocus(BaseModel):
@@ -65,6 +75,8 @@ class ResearchDecision(BaseModel):
     questions: list[str] = Field(default_factory=list, max_length=1)
     source_ids: list[str] = Field(default_factory=list, max_length=6)
     verification_required: bool = False
+    device_model: str = Field(default="", max_length=200)
+    model_evidence: Literal["unknown", "user", "label"] = "unknown"
 
     @model_validator(mode="after")
     def usable_decision(self):
@@ -85,6 +97,8 @@ class Route(BaseModel):
     related_to_task: bool = False
     needs_history: bool = False
     clarification: str = ""
+    review_kind: Literal["state", "process", "motion"] = "process"
+    audit_required: bool = False
 
 
 class SearchQuery(BaseModel):
@@ -140,10 +154,17 @@ class VisualReview(BaseModel):
 class CriterionResult(BaseModel):
     criterion: str = Field(min_length=1, max_length=300)
     status: Literal["met", "not_met", "unseen"]
+    visibility: Literal["visible", "unseen"] = "visible"
     frame_ids: list[str] = Field(default_factory=list, max_length=6)
 
 
 Verdict = Literal["ok", "adjust", "unclear", "none"]
+
+
+class ConnectionCheck(BaseModel):
+    connection_id: str = Field(min_length=1, max_length=60)
+    status: Literal["met", "not_met", "unseen"]
+    frame_ids: list[str] = Field(default_factory=list, max_length=6)
 
 
 class AnswerAudit(BaseModel):
@@ -151,6 +172,7 @@ class AnswerAudit(BaseModel):
     unsupported_claims: list[str] = Field(default_factory=list, max_length=4)
     corrected_reply: str = Field(default="", max_length=1600)
     corrected_headline: str = Field(default="", max_length=80)
+    corrected_connection_checks: list[ConnectionCheck] = Field(default_factory=list, max_length=30)
     corrected_verdict: Verdict = "none"
     corrected_criteria: list[CriterionResult] = Field(default_factory=list, max_length=4)
     corrected_suggestion: str | None = Field(default=None, max_length=2000)
@@ -164,6 +186,9 @@ class AnswerAudit(BaseModel):
 
 
 class Answer(BaseModel):
+    needs_detail: bool = False
+    evidence_conflict: bool = False
+    connection_checks: list[ConnectionCheck] = Field(default_factory=list, max_length=30)
     memory: MemoryCall | None = None
     research: ResearchDecision | None = None
     reply: str = Field(max_length=5000)
@@ -184,6 +209,10 @@ class Answer(BaseModel):
         if self.memory is not None and self.research is not None:
             raise ValueError("每轮只允许申请一个工具：memory 与 research 不能同时设置")
         return self
+
+
+class TaskTurn(Route):
+    answer: Answer
 
 
 class MemoryRequest(Answer):
@@ -220,3 +249,56 @@ class Mutation(BaseModel):
     action: Literal["confirm_plan", "pause", "resume", "finish", "step", "suggestion", "note", "issue"]
     target: str = Field(default="", max_length=100)
     value: str = Field(default="", max_length=2000)
+
+
+Route.model_rebuild()
+
+
+class Lookback(BaseModel):
+    event_id: str | None = Field(default=None, max_length=100)
+    start_time: float | None = Field(default=None, allow_inf_nan=False)
+    end_time: float | None = Field(default=None, allow_inf_nan=False)
+    reason: str = Field(default="", max_length=300)
+    fallback_question: str = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def has_target(self):
+        if not self.event_id and self.start_time is None and self.end_time is None:
+            raise ValueError("回看需要事件ID或时间范围")
+        if self.start_time is not None and self.end_time is not None and self.start_time > self.end_time:
+            raise ValueError("回看时间范围反向")
+        return self
+
+
+class CompanionReply(BaseModel):
+    headline: str = Field(default="", max_length=80)
+    reply: str = Field(max_length=2000)
+    verdict: Literal["ok", "adjust", "none"] = "none"
+    ask_user: str = Field(default="", max_length=300)
+    suggestion: str | None = Field(default=None, max_length=1000)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=20)
+    connection_checks: list[ConnectionCheck] = Field(default_factory=list, max_length=30)
+    source_ids: list[str] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode="after")
+    def has_response(self):
+        if not self.reply.strip() and not self.ask_user.strip():
+            raise ValueError("回答或状态问题不能为空")
+        return self
+
+
+class CompanionTurn(BaseModel):
+    visual_requested: bool = False
+    goal: str = Field(default="", max_length=300)
+    review_focus: ReviewFocus | None = None
+    safety_critical: bool = False
+    intent: Literal["ask", "start", "pause", "resume", "finish"] = "ask"
+    related_to_task: bool = True
+    lookback: Lookback | None = None
+    answer: CompanionReply | None = None
+
+    @model_validator(mode="after")
+    def answer_or_lookback(self):
+        if self.intent == "ask" and self.answer is None and self.lookback is None:
+            raise ValueError("需要直接回答或申请一次回看")
+        return self

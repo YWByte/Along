@@ -8,6 +8,8 @@ from along.api import create_app
 from along.config import Settings
 from along.schemas import (
     Answer,
+    CompanionTurn,
+    CompanionReply,
     EventDraft,
     FrameSelection,
     Observation,
@@ -31,7 +33,20 @@ class FakeVLM:
 
     async def structured(self, prompt, schema, images=None):
         self.calls.append((schema.__name__, images or []))
-        if schema is Route:
+        if schema is CompanionTurn:
+            context = json.loads(prompt.split("\n")[-1])
+            return CompanionTurn(
+                related_to_task="无关" not in context["text"],
+                answer=CompanionReply(
+                    reply="请核对当前方向。",
+                    evidence_ids=[im.id for im in (images or [])],
+                    ask_user="内部结构现在是什么状态？",
+                    suggestion="先查看对应型号说明书",
+                ),
+            )
+        if schema is CompanionReply:
+            return CompanionReply(reply="请核对当前方向。", evidence_ids=[im.id for im in (images or [])])
+        if issubclass(schema, Route):
             context = json.loads(prompt.split("\n")[-1])
             text = context["text"]
             if text == "我们开始吧" and not context["task"]:

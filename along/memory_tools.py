@@ -25,7 +25,7 @@ class MemoryTools:
     def overview(self):
         row = self.store.one(
             "SELECT COUNT(*) AS frames,MIN(captured) AS first,MAX(captured) AS last "
-            "FROM media WHERE task_id=? AND kind='frame' AND expired=0 AND captured<=?",
+            "FROM media WHERE task_id=? AND kind='frame' AND origin!='reference' AND expired=0 AND captured<=?",
             (self.task_id, self.cutoff),
         )
         row["events"] = self.store.one(
@@ -155,7 +155,7 @@ class MemoryTools:
                 return {"error": "片段不存在或不属于当前任务。"}, []
         elif call.tool == "open" and call.step_id is not None and call.plan_revision is None:
             return {"error": "按步骤打开时须同时指定 plan_revision，避免不同版本同名步骤混用。"}, []
-        clauses = ["task_id=?", "kind='frame'", "expired=0", "captured<=?"]
+        clauses = ["task_id=?", "kind='frame'", "origin!='reference'", "expired=0", "captured<=?"]
         args = [self.task_id, self.cutoff]
         if event:
             clauses.append("id IN (SELECT value FROM json_each(?))")

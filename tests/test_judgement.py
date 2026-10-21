@@ -6,7 +6,7 @@ from along.engine import look_for
 from along.memory_tools import MemoryTools
 from along.observation import audit_answer
 from along.providers.vlm import ImageInput
-from along.schemas import Answer, AnswerAudit, CriterionResult, MemoryCall, ReviewFocus, Route
+from along.schemas import Answer, AnswerAudit, MemoryCall
 from test_flows import ask, change, start, upload
 from test_memory_agent import active_frames
 
@@ -45,56 +45,43 @@ def test_look_for_falls_back_to_instruction():
     assert look_for({"instruction": "x", "look_for": ["手背朝上"]}) == ["手背朝上"]
 
 
-def test_current_step_question_opens_current_step_sheet_and_maps_evidence(app, client):
+def test_current_step_question_includes_sheet_and_maps_evidence(app, client):
+    from along.schemas import CompanionTurn, CompanionReply
+
     task = change(client, start(client), "confirm_plan").json()
     for _ in range(12):
         upload(client, task)
-    provider = app.state.engine.vlm
-    original = provider.structured
-    seen = {}
+    calls = []
 
     async def respond(prompt, schema, images=None):
-        if schema is Route:
-            return Route(
-                intent="ask",
-                related_to_task=True,
-                needs_history=True,
-                review_focus=ReviewFocus(temporal_scope="current_step", subject="手腕摆动"),
-            )
-        if schema is AnswerAudit:
-            seen["audit_prompt"] = prompt
-            return AnswerAudit(action="keep")
-        if issubclass(schema, Answer):
-            context = json.loads(prompt.split("\n")[-1])
-            if not context["memory_tool_results"]:
-                seen["clip"] = context["current_step_clip"]
-                clip = {k: v for k, v in context["current_step_clip"].items() if k != "note"}
-                return Answer(reply="", memory=MemoryCall(**clip))
-            sheet = images[0]
-            return Answer(
-                reply="手掌左右摆动到位。",
-                headline="对的，左右摆幅度到位",
+        calls.append(schema.__name__)
+        assert schema is CompanionTurn
+        context = json.loads(prompt.split("\n")[-1])
+        assert context["current_step"]["id"] == "s1"
+        assert len(images) == 2 and not images[0].frame_ids and images[1].frame_ids
+        return CompanionTurn(
+            answer=CompanionReply(
+                reply="可见的左右摆动方向正确。",
+                headline="对的，摆动方向正确",
                 verdict="ok",
-                criteria=[CriterionResult(criterion="对照材料", status="met", frame_ids=[sheet.id])],
-                evidence_ids=[sheet.id],
+                evidence_ids=[images[1].id],
             )
-        return await original(prompt, schema, images)
+        )
 
-    provider.structured = respond
-    result = ask(client, "我现在做的对吗", task_id=task["id"]).json()
-    assert seen["clip"]["step_id"] == "s1" and seen["clip"]["sheet"] is True
-    assert result["verdict"] == "ok" and result["headline"].startswith("对的")
+    app.state.engine.vlm.structured = respond
+    response = ask(client, "我现在做的对吗", task_id=task["id"])
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert calls == ["CompanionTurn"] and result["verdict"] == "ok"
     frames = result["retrieval"]["frames"]
     assert len(frames) >= 10 and not any(f.startswith("sheet_") for f in frames)
-    assert result["evidence_ids"] and set(result["evidence_ids"]) <= set(frames)
-    assert result["criteria"][0]["frame_ids"] == []
-    # The sidebar can show the exact composite the model saw, and only valid sheet ids are served.
+    assert set(result["evidence_ids"]) <= set(frames)
     tool = result["retrieval"]["tools"][0]["result"]
     assert tool["layout"] == "sheet"
     sheet = client.get(f"/api/sheets/{tool['sheet_id']}")
     assert sheet.status_code == 200 and sheet.headers["content-type"] == "image/jpeg"
     assert client.get("/api/sheets/..%2Faccess-token").status_code in (404, 422)
-    assert result["retrieval"]["question_frames"] == []
+    assert len(result["retrieval"]["question_frames"]) == 1
 
 
 async def test_audit_correction_keeps_visual_verdict_and_adjustment(app):

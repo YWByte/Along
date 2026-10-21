@@ -42,7 +42,7 @@ async def test_stale_answer_cannot_override_changed_task(app):
 
     async def changing(prompt, schema, images=None):
         result = await original(prompt, schema, images)
-        if schema.__name__ == "Answer":
+        if schema.__name__ in ("Answer", "CompanionTurn"):
             app.state.engine.mutate(task["id"], Mutation(version=task["version"], action="pause"))
         return result
 
@@ -122,7 +122,7 @@ async def test_original_source_survives_new_unused_sources(app):
     original = app.state.engine.vlm.structured
 
     async def inspect(prompt, schema, images=None):
-        if schema.__name__ == "Answer":
+        if schema.__name__ in ("Answer", "CompanionTurn"):
             context = json.loads(prompt.split("\n")[-1])
             seen.extend(s["id"] for s in context["reference_sources"])
         return await original(prompt, schema, images)

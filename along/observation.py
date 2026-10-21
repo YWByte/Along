@@ -80,7 +80,7 @@ async def audit_answer(vlm, scenario, focus, answer, images, reviews, criteria=N
         "verdict=adjust 时保留一个针对 not_met 标准、可立即执行的调整建议；其他情况不新增建议。"
         "检查回答是否针对讨论目标，而非误用其他步骤。不要增加检查问卷。"
         "若需修正 action=revise，给出 corrected_reply(1至2句)、corrected_headline(不超过30字)、"
-        "corrected_verdict、corrected_criteria、corrected_suggestion；evidence_ids 只引用本次提供的原图或拼图帧ID。否则keep。"
+        "corrected_verdict、corrected_criteria、corrected_connection_checks（接线场景逐条ID/状态/帧）、corrected_suggestion；evidence_ids 只引用本次提供的原图或拼图帧ID。否则keep。"
         + skill(scenario)["guidance"]
         + "\n"
         + dump(
@@ -97,7 +97,7 @@ async def audit_answer(vlm, scenario, focus, answer, images, reviews, criteria=N
     sheets = [im.frame_ids for im in images if im.frame_ids]
     if len(sheets) == 1:
         result.evidence_ids = resolve_tiles(result.evidence_ids, sheets[0])
-        for item in result.corrected_criteria:
+        for item in [*result.corrected_criteria, *result.corrected_connection_checks]:
             item.frame_ids = resolve_tiles(item.frame_ids, sheets[0])
     allowed = {fid for im in images for fid in (im.id, *im.frame_ids)}
     if not set(result.evidence_ids) <= allowed:

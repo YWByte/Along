@@ -37,7 +37,7 @@ class MemoryCatalog:
         self.add_plan(self.revision, task["plan"], task["state"].get("steps", {}))
         frames = store.rows(
             "SELECT id,captured,seq,plan_revision,step_id,origin,expired FROM media "
-            "WHERE task_id=? AND kind='frame' AND captured<=? ORDER BY captured,seq",
+            "WHERE task_id=? AND kind='frame' AND origin!='reference' AND captured<=? ORDER BY captured,seq",
             (task_id, cutoff),
         )
         by_id = {frame["id"]: frame for frame in frames}
