@@ -5,13 +5,13 @@ import tempfile
 from pathlib import Path
 from PIL import Image, ImageDraw
 from along.config import Settings
-from along.providers.vlm import CodexProxyProvider, ImageInput
+from along.providers.vlm import ImageInput, create_vlm_provider
 from along.providers.web import DeepSeekWebProvider
 
 
 async def main():
     settings = Settings()
-    provider = CodexProxyProvider(settings)
+    provider = create_vlm_provider(settings)
     web = DeepSeekWebProvider(settings)
     try:
         with tempfile.TemporaryDirectory() as tmp:

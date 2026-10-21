@@ -9,7 +9,7 @@ from along.api import create_app
 
 from along.config import Settings
 from along.engine import RESEARCH_POLICY
-from along.providers.vlm import CodexProxyProvider
+from along.providers.vlm import create_vlm_provider
 from along.schemas import ChatInput, Mutation, ResearchDecision
 from along.store import dump
 
@@ -48,7 +48,7 @@ async def no_web_flow():
 
 
 async def main():
-    provider = CodexProxyProvider(Settings())
+    provider = create_vlm_provider(Settings())
     cases = [
         ("把熟香蕉切片与原味酸奶拌成一碗早餐，已有干净碗勺和刀具", {"direct"}),
         ("整理书桌上的书、本子、笔，已有两个收纳盒", {"direct"}),

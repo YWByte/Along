@@ -12,7 +12,7 @@ from pathlib import Path
 from along.config import Settings
 from along.media import MediaStore
 from along.memory import Memory
-from along.providers.vlm import CodexProxyProvider
+from along.providers.vlm import create_vlm_provider
 from along.store import Store
 
 
@@ -28,7 +28,7 @@ async def evaluate(args):
     except BlockingIOError:
         raise RuntimeError("请先停止服务，或使用数据目录的副本") from None
     store = Store(settings.data_dir)
-    provider = CodexProxyProvider(settings)
+    provider = create_vlm_provider(settings)
     memory = Memory(store, MediaStore(store, settings), provider, settings)
     try:
         store.task(args.task_id)

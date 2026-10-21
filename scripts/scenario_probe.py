@@ -12,7 +12,7 @@ from along.config import Settings
 from along.schemas import ResearchDecision
 from along.scenarios import SCENARIO_ROUTING
 from along.engine import RESEARCH_POLICY
-from along.providers.vlm import CodexProxyProvider
+from along.providers.vlm import create_vlm_provider
 
 
 CASES = [
@@ -39,7 +39,7 @@ class OfflineWeb:
 
 
 async def main():
-    provider = CodexProxyProvider(Settings())
+    provider = create_vlm_provider(Settings())
     try:
         failures = []
         for goal, scene, actions in CASES:

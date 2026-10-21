@@ -13,7 +13,7 @@ def default_data_dir() -> Path:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ALONG_", env_file=".env", extra="ignore")
     data_dir: Path = Field(default_factory=default_data_dir)
-    llm_provider: str = "codex_proxy"
+    llm_provider: str = "deepseek"
     proxy_url: str = "http://127.0.0.1:8091/v1/responses"
     model: str = "deepseek-v4.1-flash"
     deepseek_api_key: SecretStr | None = None

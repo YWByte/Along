@@ -139,9 +139,9 @@ async def test_provider_factory_selects_deepseek_and_requires_key():
     from along.providers.vlm import DeepSeekSDKProvider, create_vlm_provider
 
     with pytest.raises(ProviderError, match="ALONG_DEEPSEEK_API_KEY"):
-        create_vlm_provider(Settings(llm_provider="deepseek"))
+        create_vlm_provider(Settings(_env_file=None, deepseek_api_key=None))
 
-    provider = create_vlm_provider(Settings(llm_provider="deepseek", deepseek_api_key="test-key"))
+    provider = create_vlm_provider(Settings(_env_file=None, deepseek_api_key="test-key"))
     assert isinstance(provider, DeepSeekSDKProvider)
     await provider.close()
 
